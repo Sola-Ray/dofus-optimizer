@@ -1,4 +1,5 @@
 import { DEFAULT_CONFIG } from './engine/optimize.js';
+import { DEFAULT_LEVELING, suggestTiers } from './engine/leveling.js';
 import { simulateSpell, classSpells } from './engine/damage.js';
 import { PASSIVES } from './engine/passives.js';
 import { STAT_LABEL, ELEMENTS } from './engine/rules.js';
@@ -25,6 +26,9 @@ const MIN_FIELDS = [
 let game;
 let lastResult = null;
 let selectedSpell = null;
+let selectedTier = 0;
+// Résultat affiché : le stuff, ou celui du palier choisi en leveling
+const shown = () => (lastResult?.tiers ? lastResult.tiers[selectedTier].result : lastResult);
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
 // ---------- Configuration persistée ----------
@@ -38,10 +42,10 @@ function loadConfig() {
       // anciennes versions : 0 voulait dire « interdit »
       if (!fm.pctExo) Object.assign(fm, { pctExo: 1, pctExoOn: false });
       if (!fm.overBudget) Object.assign(fm, { overBudget: 20, overOn: false });
-      return { ...DEFAULT_CONFIG, ...saved, fm };
+      return { ...DEFAULT_CONFIG, mode: 'stuff', ...saved, fm, leveling: { ...structuredClone(DEFAULT_LEVELING), ...saved.leveling } };
     }
   } catch { /* stockage indisponible */ }
-  return structuredClone(DEFAULT_CONFIG);
+  return { ...structuredClone(DEFAULT_CONFIG), mode: 'stuff', leveling: structuredClone(DEFAULT_LEVELING) };
 }
 function saveConfig() {
   try { localStorage.setItem(STORE, JSON.stringify(config)); } catch { /* ignoré */ }
@@ -55,18 +59,58 @@ let target = (() => {
 
 // ---------- Formulaire ----------
 
+// Mode leveling : paliers (niveau, PA et PM minimums), seuil pour changer un item, parchemins
+function levelingSection() {
+  const L = config.leveling;
+  const have = new Set(L.tiers.map(t => t.level));
+  const spells = config.elements.length ? suggestTiers(game, config.breedId, config.elements).filter(l => !have.has(l)) : [];
+  const cell = (i, k, t, label) => `<td><input type="number" min="${k === 'level' ? 1 : 0}" max="${k === 'level' ? 200 : 20}" data-tier="${i}" data-tk="${k}" value="${t[k]}" aria-label="${label}"></td>`;
+  return `<section>
+    <h2>Paliers</h2>
+    <p class="hint">Un stuff par palier. Les paliers sont optimisés ensemble pour garder des items de l'un à l'autre.</p>
+    <table class="tiers"><thead><tr><th>Niveau</th><th>PA min</th><th>PM min</th><th></th></tr></thead><tbody>
+      ${L.tiers.map((t, i) => `<tr>${cell(i, 'level', t, 'Niveau du palier')}${cell(i, 'pa', t, 'PA minimum')}${cell(i, 'pm', t, 'PM minimum')}<td><button type="button" class="del" data-untier="${i}" aria-label="Retirer le palier ${t.level}">×</button></td></tr>`).join('')}
+    </tbody></table>
+    <button type="button" class="ghost wide" id="addTier">Ajouter un palier</button>
+    ${spells.length ? `<p class="hint">Sorts de l'élément obtenus aux niveaux (clic pour ajouter un palier) :</p>
+    <div class="chips">${spells.map(l => `<button type="button" class="chip" data-addtier="${l}">${l}</button>`).join('')}</div>` : ''}
+    <label class="field small">Changer un item seulement s'il rapporte au moins (% de dégâts)
+      <input type="number" id="keepGain" min="0" max="50" step="0.5" value="${L.keepGain}">
+    </label>
+    <label class="field small">Parchemins par caractéristique
+      <select id="lvScroll">${[0, 25, 50, 100].map(v => `<option value="${v}" ${v === L.scroll ? 'selected' : ''}>${v ? '+' + v : 'aucun'}</option>`).join('')}</select>
+    </label>
+    <label class="check"><input type="checkbox" id="lvFm" ${L.fm ? 'checked' : ''}>Forgemagie sur les stuffs de leveling</label>
+  </section>`;
+}
+
+// Nouveau palier : PA / PM du palier de niveau inférieur le plus proche
+function addTier(level) {
+  const tiers = config.leveling.tiers;
+  const below = [...tiers].filter(t => t.level <= level).sort((a, b) => b.level - a.level)[0] || tiers[0] || { pa: 8, pm: 4 };
+  tiers.push({ level, pa: below.pa, pm: below.pm });
+  tiers.sort((a, b) => a.level - b.level);
+  saveConfig();
+  renderConfig();
+}
+
 function renderConfig() {
   const breeds = [...game.breeds].sort((a, b) => a.n.localeCompare(b.n));
   const itemName = id => game.items.find(i => i.id === id)?.n || id;
+  const lv = config.mode === 'leveling';
   $('#config').innerHTML = `
     <section>
+      <fieldset class="seg"><legend>Mode</legend>
+        <label title="Un stuff pour un niveau donné"><input type="radio" name="mode" value="stuff" ${lv ? '' : 'checked'}>Un stuff</label>
+        <label title="Un stuff par palier de niveau, en gardant des items d'un palier à l'autre"><input type="radio" name="mode" value="leveling" ${lv ? 'checked' : ''}>Leveling</label>
+      </fieldset>
       <h2>Personnage</h2>
       <label class="field">Classe
         <select id="breed">${breeds.map(b => `<option value="${b.id}" ${b.id === config.breedId ? 'selected' : ''}>${esc(b.n)}</option>`).join('')}</select>
       </label>
-      <label class="field small">Niveau du personnage
+      ${lv ? '' : `<label class="field small">Niveau du personnage
         <input type="number" id="level" min="1" max="200" value="${config.level}">
-      </label>
+      </label>`}
       <fieldset class="chips"><legend>Éléments joués</legend>
         ${ELEMENTS.map(el => `<label class="chip el-${el}"><input type="checkbox" name="el" value="${el}" ${config.elements.includes(el) ? 'checked' : ''}>${EL_LABEL[el]}</label>`).join('')}
       </fieldset>
@@ -79,20 +123,20 @@ function renderConfig() {
         <label title="Le premier tour du combat"><input type="radio" name="scenario" value="tour1" ${config.scenario === 'tour1' ? 'checked' : ''}>Tour 1</label>
         <label title="Le meilleur tour pour frapper"><input type="radio" name="scenario" value="burst" ${config.scenario === 'burst' ? 'checked' : ''}>Tour de burst</label>
       </fieldset>
-      <fieldset class="seg seg3"><legend>Critique</legend>
+      ${lv ? '' : `<fieldset class="seg seg3"><legend>Critique</legend>
         <label title="Compare 100 % critique et sans critique, garde le meilleur"><input type="radio" name="critMode" value="auto" ${config.critMode === 'auto' ? 'checked' : ''}>Auto</label>
         <label title="Vise 100 % critique sur tous les sorts de l'élément"><input type="radio" name="critMode" value="crit" ${config.critMode === 'crit' ? 'checked' : ''}>100 %</label>
         <label><input type="radio" name="critMode" value="noncrit" ${config.critMode === 'noncrit' ? 'checked' : ''}>Sans</label>
       </fieldset>
-      <label class="check"><input type="checkbox" id="scroll" ${config.fullScroll ? 'checked' : ''}>Full parchemins (+100 partout)</label>
+      <label class="check"><input type="checkbox" id="scroll" ${config.fullScroll ? 'checked' : ''}>Full parchemins (+100 partout)</label>`}
     </section>
-    <section>
+    ${lv ? levelingSection() : `<section>
       <h2>Minimums à respecter</h2>
       <div class="grid2">
         ${MIN_FIELDS.map(([k, l]) => `<label class="field small">${l}<input type="number" min="0" data-min="${k}" value="${config.min[k] ?? ''}" placeholder="—"></label>`).join('')}
       </div>
-    </section>
-    <section>
+    </section>`}
+    ${lv && !config.leveling.fm ? '' : `<section>
       <h2>Forgemagie</h2>
       <p class="hint">Une seule finition par item, comme en vrai. Le moteur choisit item par item la finition qui rapporte le plus parmi celles cochées, ou aucune.</p>
       <label class="check"><input type="checkbox" data-fm="transcendance" ${config.fm.transcendance ? 'checked' : ''}>Runes de transcendance</label>
@@ -111,10 +155,10 @@ function renderConfig() {
       <label class="field">Qualité des jets des items
         <select id="rollQuality">${[[1, '100 %'], [0.95, '95 %'], [0.85, '85 %']].map(([v, l]) => `<option value="${v}" ${v === config.rollQuality ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </label>
-    </section>
+    </section>`}
     <section>
       <h2>Items</h2>
-      <label class="field small">Niveau minimum des items<input type="number" id="minLevel" min="1" max="200" value="${config.minLevel}"></label>
+      ${lv ? '' : `<label class="field small">Niveau minimum des items<input type="number" id="minLevel" min="1" max="200" value="${config.minLevel}"></label>`}
       <label class="check"><input type="checkbox" id="gelano" ${config.gelanoPaPm ? 'checked' : ''}>Imposer un Gelano PA PM (exo PM)</label>
       <label class="field">Ajouter un item
         <input id="itemSearch" list="itemList" placeholder="Nom d'un item…" autocomplete="off">
@@ -134,30 +178,47 @@ function renderConfig() {
   bindConfig();
 }
 
+function onConfigChange(e) {
+  const t = e.target;
+  const root = $('#config');
+  // changements qui modifient le formulaire lui-même : on le redessine
+  let redraw = false;
+  if (t.name === 'mode') { config.mode = t.value; redraw = true; }
+  else if (t.id === 'breed') { config.breedId = Number(t.value); redraw = true; }
+  else if (t.name === 'el') { config.elements = [...root.querySelectorAll('input[name=el]:checked')].map(i => i.value); redraw = config.mode === 'leveling'; }
+  else if (t.dataset.tier) {
+    const tier = config.leveling.tiers[Number(t.dataset.tier)];
+    const max = t.dataset.tk === 'level' ? 200 : 20;
+    tier[t.dataset.tk] = Math.min(max, Math.max(t.dataset.tk === 'level' ? 1 : 0, Number(t.value) || 0));
+    if (t.dataset.tk === 'level') { config.leveling.tiers.sort((a, b) => a.level - b.level); redraw = true; }
+  } else if (t.id === 'keepGain') config.leveling.keepGain = Math.max(0, Number(t.value) || 0);
+  else if (t.id === 'lvScroll') config.leveling.scroll = Number(t.value);
+  else if (t.id === 'lvFm') { config.leveling.fm = t.checked; redraw = true; }
+  else if (t.name === 'attack') config.attack = t.value;
+  else if (t.name === 'scenario') config.scenario = t.value;
+  else if (t.name === 'critMode') config.critMode = t.value;
+  else if (t.id === 'scroll') config.fullScroll = t.checked;
+  else if (t.id === 'gelano') config.gelanoPaPm = t.checked;
+  else if (t.id === 'pctExo') config.fm.pctExo = Number(t.value);
+  else if (t.id === 'overBudget') config.fm.overBudget = Number(t.value);
+  else if (t.id === 'rollQuality') config.rollQuality = Number(t.value);
+  else if (t.dataset.fm) config.fm[t.dataset.fm] = t.checked;
+  else if (t.dataset.min) {
+    if (t.value === '') delete config.min[t.dataset.min];
+    else config.min[t.dataset.min] = Number(t.value);
+  } else if (t.id === 'level') {
+    config.level = Math.min(200, Math.max(1, Number(t.value) || 200));
+    t.value = config.level;
+  } else if (t.id === 'minLevel') config.minLevel = Math.max(1, Number(t.value) || 1);
+  saveConfig();
+  if (redraw) renderConfig();
+}
+
 function bindConfig() {
   const root = $('#config');
-  root.addEventListener('change', e => {
-    const t = e.target;
-    if (t.id === 'breed') config.breedId = Number(t.value);
-    else if (t.name === 'el') config.elements = [...root.querySelectorAll('input[name=el]:checked')].map(i => i.value);
-    else if (t.name === 'attack') config.attack = t.value;
-    else if (t.name === 'scenario') config.scenario = t.value;
-    else if (t.name === 'critMode') config.critMode = t.value;
-    else if (t.id === 'scroll') config.fullScroll = t.checked;
-    else if (t.id === 'gelano') config.gelanoPaPm = t.checked;
-    else if (t.id === 'pctExo') config.fm.pctExo = Number(t.value);
-    else if (t.id === 'overBudget') config.fm.overBudget = Number(t.value);
-    else if (t.id === 'rollQuality') config.rollQuality = Number(t.value);
-    else if (t.dataset.fm) config.fm[t.dataset.fm] = t.checked;
-    else if (t.dataset.min) {
-      if (t.value === '') delete config.min[t.dataset.min];
-      else config.min[t.dataset.min] = Number(t.value);
-    } else if (t.id === 'level') {
-      config.level = Math.min(200, Math.max(1, Number(t.value) || 200));
-      t.value = config.level;
-    } else if (t.id === 'minLevel') config.minLevel = Math.max(1, Number(t.value) || 1);
-    saveConfig();
-  });
+  // #config garde ses écouteurs quand le formulaire est redessiné : on ne les pose qu'une fois
+  if (!root.dataset.bound) root.addEventListener('change', onConfigChange);
+  root.dataset.bound = '1';
   const pick = list => {
     const name = $('#itemSearch').value.trim().toLowerCase();
     const it = game.items.find(i => i.n.toLowerCase() === name);
@@ -176,6 +237,11 @@ function bindConfig() {
   });
   root.querySelectorAll('[data-unban]').forEach(b => b.onclick = () => {
     config.banned = config.banned.filter(id => id !== Number(b.dataset.unban)); saveConfig(); renderConfig();
+  });
+  if ($('#addTier')) $('#addTier').onclick = () => addTier(Math.min(200, (config.leveling.tiers.at(-1)?.level ?? 0) + 20));
+  root.querySelectorAll('[data-addtier]').forEach(b => b.onclick = () => addTier(Number(b.dataset.addtier)));
+  root.querySelectorAll('[data-untier]').forEach(b => b.onclick = () => {
+    config.leveling.tiers.splice(Number(b.dataset.untier), 1); saveConfig(); renderConfig();
   });
   $('#run').onclick = run;
 }
@@ -225,17 +291,27 @@ function run() {
   if (!config.elements.length) { setStatus('Choisis au moins un élément.', 'error'); return; }
   $('#run').disabled = true;
   setStatus('Préparation du modèle…');
+  if (config.mode === 'leveling') {
+    if (!config.leveling.tiers.length) { setStatus('Ajoute au moins un palier.', 'error'); $('#run').disabled = false; return; }
+    // leveling : sans critique (100 % critique n'est pas atteignable à bas niveau)
+    startProgress(config.leveling.tiers.length);
+    worker.postMessage({ type: 'leveling', config: { ...config, critMode: 'noncrit' } });
+    return;
+  }
   startProgress(config.critMode === 'auto' ? 2 : 1);
   worker.postMessage({ type: 'run', config });
 }
 
 worker.onmessage = ({ data }) => {
   if (data.type === 'progress') {
+    // leveling : les paliers seuls d'abord, puis le modèle commun prend toute la barre
+    if (data.mode === 'joint' && !progress.modes.joint) Object.assign(progress, { modes: {}, count: 1 });
     progress.modes[data.mode] = data;
     progress.shown = Math.max(progress.shown, progressTarget());
     paintButton();
     if (data.value === undefined) return;
-    setStatus(`${MODE_LABEL[data.mode]} · ${['', 'meilleurs items', 'tous les items', 'finitions'][data.phase]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
+    if (data.label) setStatus(`${data.label} · ${data.phase === 3 ? 'finitions' : `itération ${data.iter}`} · ${fmt(data.value)} dégâts moyens par sort${data.mode === 'joint' ? ' au dernier palier' : ''}`);
+    else setStatus(`${MODE_LABEL[data.mode]} · ${['', 'meilleurs items', 'tous les items', 'finitions'][data.phase]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
   } else if (data.type === 'result') {
     // termine visiblement à 100 % avant de rendre la main
     clearInterval(progress.timer);
@@ -245,9 +321,13 @@ worker.onmessage = ({ data }) => {
     $('#run').disabled = false;
     lastResult = data.result;
     selectedSpell = null;
-    const warn = [...data.result.violations.map(v => `${STAT_LABEL[v.key] || v.key} < ${v.min}`), ...data.result.unmetConditions.map(n => `condition non remplie : ${n}`)];
+    selectedTier = 0;
+    const tiers = data.result.tiers || [{ result: data.result }];
+    const warn = tiers.flatMap(t => [...t.result.violations.map(v => `${STAT_LABEL[v.key] || v.key} < ${v.min}`), ...t.result.unmetConditions.map(n => `condition non remplie : ${n}`)]
+      .map(w => (t.level ? `niv. ${t.level} : ${w}` : w)));
     const took = ` (${Math.round(data.result.seconds)} s)`;
-    setStatus(warn.length ? `Stuff trouvé${took}, avec des réserves : ${warn.join(', ')}` : `Stuff trouvé${took}.`, warn.length ? 'warn' : 'ok');
+    const what = data.result.tiers ? `${tiers.length} stuffs trouvés` : 'Stuff trouvé';
+    setStatus(warn.length ? `${what}${took}, avec des réserves : ${warn.join(', ')}` : `${what}${took}.`, warn.length ? 'warn' : 'ok');
     renderStuff();
     renderSim();
   } else if (data.type === 'error') {
@@ -316,8 +396,30 @@ function itemSheet(it) {
 }
 const ELEMENT_DO_KEY = { feu: 'doFeu', eau: 'doEau', terre: 'doTerre', air: 'doAir', neutre: 'doNeutre' };
 
+// Frise du mode leveling : un bouton par palier, puis le bilan du palier choisi
+function levelingHeader() {
+  const L = lastResult;
+  if (!L?.tiers) return '';
+  const t = L.tiers[selectedTier];
+  const pct = t.alone > 0 ? (100 * t.result.score) / t.alone : 100;
+  return `
+    <div class="timeline" role="tablist" aria-label="Paliers">
+      ${L.tiers.map((x, i) => `<button type="button" role="tab" aria-selected="${i === selectedTier}" data-tierview="${i}">
+        <strong>Niv. ${x.level}</strong><span>${fmt(x.result.score)} dégâts</span><small>${i ? `${x.added.length} nouveau${x.added.length > 1 ? 'x' : ''}` : `${x.added.length} items`}</small>
+      </button>`).join('')}
+    </div>
+    <p class="banner">${selectedTier
+      ? `<strong>${t.kept.length}</strong> items gardés du palier ${L.tiers[selectedTier - 1].level}, <strong>${t.added.length}</strong> nouveaux.`
+      : 'Premier palier : tout le stuff est à acheter.'}
+      Le meilleur stuff possible à ce niveau, sans rien garder, ferait ${fmt(t.alone)} dégâts : celui-ci en fait ${pct.toFixed(1)} %.
+      Un item n'est changé que s'il rapporte au moins ${L.leveling.keepGain} % de dégâts.</p>`;
+}
+
 function renderStuff() {
-  const r = lastResult;
+  const r = shown();
+  const tier = lastResult.tiers?.[selectedTier];
+  const kept = new Set(tier?.kept || []);
+  const badge = it => (tier && selectedTier ? `<span class="badge ${kept.has(it.id) ? 'kept' : 'new'}">${kept.has(it.id) ? 'Gardé' : 'Nouveau'}</span>` : '');
   const items = [...r.items].sort((a, b) => SLOT_ORDER.indexOf(a.s) - SLOT_ORDER.indexOf(b.s));
   const passiveNotes = r.items.filter(i => i.passive && PASSIVES[i.passive]).map(i => {
     const p = game.passives[i.passive];
@@ -332,6 +434,7 @@ function renderStuff() {
     ['Divers', ['tacle', 'fuite', 'retPA', 'retPM', 'esqPA', 'esqPM', 'ini', 'pp', 'soins']],
   ];
   $('#tab-stuff').innerHTML = `
+    ${levelingHeader()}
     <div class="score-row">
       ${Object.entries(r.elementScores).map(([el, v]) => `<div class="score el-${el}"><span>${EL_LABEL[el]}</span><strong>${fmt(v)}</strong><small>dégâts moyens par sort (sans cible)</small></div>`).join('')}
       <div class="score"><span>Points de carac.</span><strong>${Object.entries(r.points).map(([k, v]) => `${v} ${STAT_LABEL[k]}`).join(', ') || '—'}</strong><small>${r.pointsCost} / ${r.pointsMax} points utilisés</small></div>
@@ -343,6 +446,7 @@ function renderStuff() {
         <article class="item">
           <header><img src="${ITEM_IMG(it.img)}" alt="" width="48" height="48" loading="lazy">
             <div><small>${SLOT_LABEL[it.s]} · niv. ${it.l}</small><h3>${esc(it.n)}</h3>${it.set ? `<small class="set">${esc(game.sets[it.set]?.n || '')}</small>` : ''}</div>
+            ${badge(it)}
           </header>
           ${itemSheet(it)}
         </article>`).join('')}
@@ -357,6 +461,12 @@ function renderStuff() {
     <table class="compare"><tbody>${r.fmComparison.filter(o => o.gain > 0).map(o => `<tr class="${o.trans ? 'trans' : ''}"><td>${esc(o.label)}</td><td>+${o.pct.toFixed(2)} %</td><td>+${fmt(o.gain)}</td></tr>`).join('')}</tbody></table>
     ${passiveNotes ? `<h2>Passifs pris en compte</h2><ul class="passives">${passiveNotes}</ul>` : ''}
   `;
+  $('#tab-stuff').querySelectorAll('[data-tierview]').forEach(b => b.onclick = () => {
+    selectedTier = Number(b.dataset.tierview);
+    selectedSpell = null;
+    renderStuff();
+    renderSim();
+  });
 }
 
 function critBanner(r) {
@@ -370,7 +480,7 @@ function critBanner(r) {
 
 function renderSim() {
   if (!lastResult) return;
-  const r = lastResult;
+  const r = shown();
   const breed = game.breeds.find(b => b.id === r.config.breedId);
   const ctx = { ...r.ctx, refSpells: {} };
   const spells = classSpells(game, breed.id, r.config.level);

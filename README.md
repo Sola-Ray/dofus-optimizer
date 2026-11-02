@@ -15,7 +15,13 @@ Pour mettre à jour les données après un patch (environ 1 minute) :
 npm run data
 ```
 
-Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`.
+Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`, et `node test/run-leveling.mjs` pour le mode leveling.
+
+## Mode leveling
+
+Un stuff par palier de niveau (par défaut 50, 80, 110, 150 et 200, avec des PA / PM minimums propres à chaque palier). Les niveaux d'obtention des sorts de l'élément sont proposés comme paliers. Les paliers sont optimisés **ensemble** : changer un item coûte une pénalité, réglée par « changer un item seulement s'il rapporte au moins X % de dégâts » (3 % par défaut). Le moteur garde donc les panoplies qui restent bonnes plusieurs paliers au lieu de tout racheter, comme les stuffs de leveling des guides. Chaque palier affiche les items gardés et nouveaux, et ses dégâts comparés au meilleur stuff possible à ce niveau sans rien garder.
+
+Par défaut : sans critique, sans forgemagie ni transcendance, parchemins réglables (0 à 100). Calcul : chaque palier seul (sur les 20 meilleurs items par emplacement et par direction, union sur tous les paliers), puis un seul modèle qui contient tous les paliers, en partant de ces solutions. Environ 2 minutes pour 5 paliers.
 
 ## Fonctionnement
 

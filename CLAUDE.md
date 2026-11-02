@@ -6,6 +6,7 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 
 - `npm run dev` : appli locale (Vite, port 5173).
 - `npm run data` : retélécharge DofusDB (`data/raw/`, non versionné) puis reconstruit `public/game.json` et `public/icons/`.
+- `node test/run-leveling.mjs '<config json>'` : mode leveling en ligne de commande (Eni feu, paliers par défaut). Exemple : `'{"leveling":{"keepGain":5}}'`.
 - `node test/run-eni.mjs [auto|crit|noncrit] '<config json>'` : lance le moteur en ligne de commande (Eniripsa feu, 12 PA / 6 PM par défaut). Exemple : `'{"fm":{"pctExo":2},"min":{"pa":12,"pm":6,"po":6,"resMoy":25}}'`.
 
 ## Sources de données Dofus 3
@@ -38,6 +39,8 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 ## Performance
 
 Le temps passe dans la recherche d'une bonne première solution, pas dans le branch-and-bound. D'où : session HiGHS persistante (coupes ajoutées à chaud + `setSolution`), trois tangentes de départ sur des stats de fin de jeu, phase 1 sur les 40 meilleurs items par emplacement puis phase 2 sur tous les items. N'actualiser la borne de Kelley que si le statut est optimal.
+
+Mode leveling (`src/engine/leveling.js`) : le modèle commun est fait des sections de `buildSections` de chaque palier, renommées avec le suffixe `__k`. Les candidats de chaque palier sont l'union des items élagués de **tous** les paliers (via `keepIds`), sinon un item gardé d'un palier à l'autre peut disparaître des candidats du palier suivant et le moteur est forcé de le changer.
 
 ## Git
 

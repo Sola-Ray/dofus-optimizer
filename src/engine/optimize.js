@@ -73,6 +73,7 @@ export function prepare(game, cfg) {
   const fmable = fmKeys(cfg);
   const banned = new Set(cfg.banned);
   const forced = new Set(cfg.forced);
+  const keep = new Set(cfg.keepIds || []); // gardés malgré l'élagage (mode leveling)
   const w = game.runeWeight;
 
   // Panoplies qui donnent au moins un bonus utile
@@ -105,8 +106,8 @@ export function prepare(game, cfg) {
   });
 
   // Élagage : un item « simple » dominé par un autre du même emplacement sur toutes les stats utiles
-  const simple = it => !it.crit && !it.passive && !(it.set && usefulSet.has(it.set)) && !forced.has(it.id);
-  const useful = it => it.passive || forced.has(it.id) || (it.set && usefulSet.has(it.set)) ||
+  const simple = it => !it.crit && !it.passive && !(it.set && usefulSet.has(it.set)) && !forced.has(it.id) && !keep.has(it.id);
+  const useful = it => it.passive || forced.has(it.id) || keep.has(it.id) || (it.set && usefulSet.has(it.set)) ||
     Object.entries(it.st).some(([k, v]) => keys.has(k) && v > 0) || Object.keys(it.fmCap).length > 0;
   items = items.filter(useful);
   const bySlot = {};
@@ -183,14 +184,18 @@ export function solutionStats(problem, sol) {
     sol.setBonuses.push({ id: Number(id), n: set.n, count: n, bonus: b });
   }
   for (const [k, v] of Object.entries(sol.points || {})) add(k, v);
-  if (problem.cfg.fullScroll) for (const k of [...CARACS, 'vita', 'sagesse']) add(k, SCROLL);
+  const sc = scrollOf(problem.cfg);
+  if (sc) for (const k of [...CARACS, 'vita', 'sagesse']) add(k, sc);
   for (const [k, v] of Object.entries(sol.fm || {})) add(k, v);
   for (const [k, n] of Object.entries(sol.trans || {})) add(k, n * problem.trans[k].v);
   st.setBonus = sol.setBonuses.length;
   return st;
 }
 
-function ctxOf(problem, passives, real = false) {
+// Parchemins par caractéristique : cfg.scroll s'il est donné (mode leveling), sinon full ou rien
+export const scrollOf = cfg => cfg.scroll ?? (cfg.fullScroll ? SCROLL : 0);
+
+export function ctxOf(problem, passives, real = false) {
   const { cfg } = problem;
   return {
     elements: cfg.elements, attack: cfg.attack, scenario: cfg.scenario, refSpells: problem.refSpells, passives,
@@ -203,17 +208,19 @@ function ctxOf(problem, passives, real = false) {
 const num = v => (Math.abs(v) < 1e-12 ? 0 : +v.toFixed(9));
 function term(c, v) { const n = num(c); return n === 0 ? '' : ` ${n >= 0 ? '+' : '-'} ${Math.abs(n)} ${v}`; }
 
-function buildLP(problem, cuts) {
+// Sections du modèle : obj (termes de l'objectif), rows, bounds, generals, binaries.
+// Le mode leveling les renomme par palier pour assembler un seul modèle.
+export function buildSections(problem, cuts) {
   const { cfg, keys, items, sets, breed, runeWeight: w } = problem;
   const transOk = it => FM_SLOTS.has(it.s) && Object.keys(problem.trans).length > 0;
   const rows = [];
   const bounds = [];
   const binaries = [];
   const generals = [];
-  const scroll = k => (cfg.fullScroll && (CARACS.includes(k) || k === 'vita' || k === 'sagesse') ? SCROLL : 0);
+  const scroll = k => (CARACS.includes(k) || k === 'vita' || k === 'sagesse' ? scrollOf(cfg) : 0);
 
   // Objectif
-  let obj = ' obj: t';
+  let obj = ' + t';
   for (const k of RES_KEYS) obj += term(EPS_RES, `T_${k}`);
 
   // Totaux de stats
@@ -365,17 +372,22 @@ function buildLP(problem, cuts) {
     rows.push(`${r} <= ${num(c.rhs)}`);
   });
   bounds.push(' t free', ' pv >= 0');
+  return { obj, rows, bounds, generals, binaries };
+}
 
+export function lpText({ obj, rows, bounds, generals, binaries }) {
   return [
-    'Maximize', obj, 'Subject To', ...rows, 'Bounds', ...bounds,
+    'Maximize', ' obj:' + obj, 'Subject To', ...rows, 'Bounds', ...bounds,
     generals.length ? 'General' : '', generals.length ? ' ' + generals.join(' ') : '',
     'Binary', ' ' + binaries.join(' '), 'End',
   ].filter(Boolean).join('\n');
 }
 
+const buildLP = (problem, cuts) => lpText(buildSections(problem, cuts));
+
 // ---------- Lecture d'une solution ----------
 
-function readSolution(problem, cols) {
+export function readSolution(problem, cols) {
   const v = name => cols[name]?.Primal ?? 0;
   const items = problem.items.filter(it => v(`x${it.idx}`) > 0.5);
   const points = {};
@@ -415,7 +427,7 @@ export function pointsCost(breed, points) {
 const GRAD_KEYS = ['do', 'puissance', 'crit', 'doCrit', 'pctSorts', 'pctDist', 'pctMelee', 'pctFinaux', 'force', 'intel', 'chance', 'agi',
   'doFeu', 'doEau', 'doTerre', 'doAir', 'doNeutre'];
 
-function makeCuts(problem, stats, sol) {
+export function makeCuts(problem, stats, sol) {
   const passives = sol.items.filter(it => it.passive).map(it => it.passive);
   const ctx = ctxOf(problem, passives);
   const base = elementScores(stats, ctx);
@@ -572,7 +584,7 @@ function fmComparison(problem, stats, passives) {
 // + PA, + PM, + critique), plus les Dofus, les passifs et les items imposés.
 const PRUNE_K = 40;
 
-function rebuildProblem(problem, items) {
+export function rebuildProblem(problem, items) {
   items = items.map((it, idx) => ({ ...it, idx }));
   const useful = new Set(problem.sets.map(s => s.id));
   const bySet = {};
@@ -588,7 +600,7 @@ function rebuildProblem(problem, items) {
   return { ...problem, items, sets };
 }
 
-function pruneTopK(problem, startStats, K) {
+export function pruneTopK(problem, startStats, K) {
   const g = makeCuts(problem, startStats, { items: [] })[0].g;
   const setMax = {};
   for (const s of problem.sets) setMax[s.id] = s.bonus[s.bonus.length - 1];
@@ -612,7 +624,7 @@ function pruneTopK(problem, startStats, K) {
 }
 
 // Coupe de Kelley -> ligne { terms, rhs } pour une session persistante
-const cutRow = c => ({
+export const cutRow = c => ({
   terms: {
     t: 1,
     ...Object.fromEntries(Object.entries(c.g).map(([k, g]) => [`T_${k}`, -g])),
@@ -622,7 +634,7 @@ const cutRow = c => ({
 });
 
 // Boucle de Kelley sur un modèle persistant : coupes ajoutées à chaud, départ sur la solution précédente
-async function kelley(solver, problem, cuts, start, onProgress, phase) {
+export async function kelley(solver, problem, cuts, start, onProgress, phase) {
   const session = await solver.open(buildLP(problem, cuts));
   try {
     if (start) await session.warmStart(start);
@@ -653,27 +665,39 @@ async function kelley(solver, problem, cuts, start, onProgress, phase) {
   }
 }
 
+// Point « sans item » : seulement des points de carac dans les éléments joués
+export function startStatsOf(problem) {
+  const { cfg } = problem;
+  const startPoints = {};
+  for (const el of cfg.elements) startPoints[ELEMENT_STAT[el]] = Math.floor(problem.points / 2.5 / cfg.elements.length);
+  return solutionStats(problem, { items: [], points: startPoints, fm: {} });
+}
+
+// Tangentes de départ : le point « sans item » plus trois points de stats plausibles pour le niveau,
+// pour que la première résolution tombe déjà près de l'optimum.
+export function startCuts(problem, startStats) {
+  const { cfg } = problem;
+  const f = Math.min(cfg.level, 200) / 200;
+  const ref = { puissance: 300 * f, do: 25 * f, doCrit: 90 * f, crit: problem.mode === 'crit' ? problem.critTarget : 0, pctSorts: 8 * f, pctDist: 8 * f, pctMelee: 8 * f };
+  for (const el of cfg.elements) { ref[ELEMENT_STAT[el]] = 1000 * f; ref[ELEMENT_DO[el]] = 60 * f; }
+  const cuts = [...makeCuts(problem, startStats, { items: [] })];
+  for (const scale of [0.6, 1, 1.4]) {
+    const st = { ...startStats };
+    for (const [k, v] of Object.entries(ref)) st[k] = (st[k] || 0) + scale * v;
+    cuts.push(...makeCuts(problem, st, { items: [] }));
+  }
+  return cuts;
+}
+
 async function solveMode(solver, game, cfg, mode, onProgress) {
   const full = prepare(game, cfg);
   full.setsById = game.sets;
   full.mode = mode;
-
-  // Tangentes de départ : le point « sans item » plus trois points de stats de fin de jeu
-  // plausibles, pour que la première résolution tombe déjà près de l'optimum.
-  const startPoints = {};
-  for (const el of cfg.elements) startPoints[ELEMENT_STAT[el]] = Math.floor(400 / cfg.elements.length);
-  const startStats = solutionStats(full, { items: [], points: startPoints, fm: {} });
-  const ref = { puissance: 300, do: 25, doCrit: 90, crit: mode === 'crit' ? full.critTarget : 0, pctSorts: 8, pctDist: 8, pctMelee: 8 };
-  for (const el of cfg.elements) { ref[ELEMENT_STAT[el]] = 1000; ref[ELEMENT_DO[el]] = 60; }
+  const startStats = startStatsOf(full);
 
   // Phase 1 : items élagués. Phase 2 : tous les items, en partant de la solution de la phase 1.
   const p1 = full.items.length > 600 ? pruneTopK(full, startStats, PRUNE_K) : full;
-  const cuts = [...makeCuts(p1, startStats, { items: [] })];
-  for (const scale of [0.6, 1, 1.4]) {
-    const st = { ...startStats };
-    for (const [k, v] of Object.entries(ref)) st[k] = (st[k] || 0) + scale * v;
-    cuts.push(...makeCuts(p1, st, { items: [] }));
-  }
+  const cuts = startCuts(p1, startStats);
   let best = await kelley(solver, p1, cuts, null, onProgress, 1);
   let problem = p1;
   if (p1 !== full) {
@@ -692,8 +716,12 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
     problem = full;
   }
 
-  // Forgemagie exacte item par item, runes de transcendance, puis stats finales
   onProgress({ mode, phase: 3, iter: 0, value: best.value, items: problem.items.length });
+  return finalize(solver, problem, best);
+}
+
+// Forgemagie exacte item par item, runes de transcendance, puis stats finales
+export async function finalize(solver, problem, best) {
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
   const grad = makeCuts(problem, bestStats, best)[0]?.g || {};
@@ -783,25 +811,36 @@ function exoNotes(cfg, stats, perItem) {
 
 // solver.open(lp) -> session persistante, solver.solve(lp, options) -> résultat ponctuel ;
 // les modes de critique tournent en parallèle
-export async function optimize(solver, game, config, onProgress = () => {}) {
+export function normalizeConfig(game, config) {
   const cfg = { ...DEFAULT_CONFIG, ...config, fm: { ...DEFAULT_CONFIG.fm, ...config.fm }, min: { ...(config.min ?? DEFAULT_CONFIG.min) } };
   // une finition décochée = valeur max à 0 (le moteur ne la propose pas)
   if (!cfg.fm.pctExoOn) cfg.fm.pctExo = 0;
   if (!cfg.fm.overOn) cfg.fm.overBudget = 0;
   if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
   if (cfg.gelanoPaPm) {
-    const lvl = game.items.find(it => it.id === GELANO)?.l ?? 60;
+    const lvl = gelanoLevel(game);
     if (cfg.level < lvl) throw new Error(`Le Gelano demande le niveau ${lvl}.`);
     cfg.forced = [...new Set([...cfg.forced, GELANO])];
     cfg.banned = cfg.banned.filter(id => id !== GELANO);
   }
+  return cfg;
+}
 
+export const gelanoLevel = game => game.items.find(it => it.id === GELANO)?.l ?? 60;
+
+export async function optimize(solver, game, config, onProgress = () => {}) {
+  const cfg = normalizeConfig(game, config);
   const modes = cfg.critMode === 'auto' ? ['crit', 'noncrit'] : [cfg.critMode];
   let lastError;
   const runs = (await Promise.all(modes.map(mode => solveMode(solver, game, cfg, mode, onProgress)
     .then(r => ({ mode, ...r }), e => { lastError = e; return null; })))).filter(Boolean);
   if (!runs.length) throw lastError;
   const chosen = runs.reduce((a, b) => (b.realScore > a.realScore ? b : a));
+  return buildResult(cfg, chosen, runs, modes.length > runs.length ? lastError?.message : null);
+}
+
+// Résultat affichable d'une résolution finalisée (chosen = sortie de finalize, avec son mode)
+export function buildResult(cfg, chosen, runs, failed = null) {
   const { problem, final, stats, perItem, transPerItem, passives, ctx } = chosen;
 
   const violations = Object.entries(cfg.min)
@@ -826,7 +865,7 @@ export async function optimize(solver, game, config, onProgress = () => {}) {
     crit: {
       mode: chosen.mode, target: problem.critTarget,
       runs: runs.map(r => ({ mode: r.mode, score: r.realScore })),
-      failed: modes.length > runs.length ? lastError?.message : null,
+      failed,
     },
     fmComparison: fmComparison(problem, stats, passives),
     exoNotes: exoNotes(cfg, stats, perItem),
