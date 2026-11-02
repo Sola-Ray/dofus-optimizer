@@ -209,7 +209,7 @@ function setStatus(text, kind = '') {
 // Icônes des stats comme en jeu ; DofusDB n'a pas toutes les icônes, on retombe sur la plus proche
 const ICON_FALLBACK = {
   resFeu: 'tx_intelligence', resEau: 'tx_chance', resTerre: 'tx_strength', resAir: 'tx_agility', resNeutre: 'tx_neutral',
-  rfTerre: 'tx_strength', pctSorts: 'tx_damagesPercent', pctDist: 'tx_damagesPercent', pctMelee: 'tx_damagesPercent',
+  rfFeu: 'tx_intelligence', rfEau: 'tx_chance', rfTerre: 'tx_strength', rfAir: 'tx_agility', rfNeutre: 'tx_neutral', pctSorts: 'tx_damagesPercent', pctDist: 'tx_damagesPercent', pctMelee: 'tx_damagesPercent',
   pctArmes: 'tx_damagesPercent', pctFinaux: 'tx_damagesPercent', resDist: 'tx_pushReduction', resMelee: 'tx_pushReduction',
   resSorts: 'tx_pushReduction', resArmes: 'tx_pushReduction',
 };

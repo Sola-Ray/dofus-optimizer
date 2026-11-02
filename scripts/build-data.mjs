@@ -51,8 +51,9 @@ function statOf(effectId, min, max) {
   if (!key) return null;
   const sign = e.characteristicOperator === '-' ? -1 : 1;
   // jet max pour un bonus, malus le plus faible pour un malus
+  // Les panoplies stockent déjà leurs malus en négatif (-40), les items en positif (40)
   const v = sign > 0 ? Math.max(min, max) : min;
-  return [key, sign * v];
+  return [key, sign * Math.abs(v)];
 }
 
 const outItems = [];
@@ -171,7 +172,10 @@ for (const asset of new Set(Object.values(statIcon))) {
   try { await readFile(file); continue; } catch { /* à télécharger */ }
   const res = await fetch(`https://dofusdb.fr/icons/characteristics/${asset}.png`);
   if (res.ok) await writeFile(file, Buffer.from(await res.arrayBuffer()));
-  else delete statIcon[Object.keys(statIcon).find(k => statIcon[k] === asset)];
+}
+// on ne garde que les icônes réellement disponibles (DofusDB n'a pas celles des résistances)
+for (const [k, asset] of Object.entries(statIcon)) {
+  try { await readFile(new URL(`${asset}.png`, ICONS)); } catch { delete statIcon[k]; }
 }
 
 await mkdir(new URL('../public/', import.meta.url), { recursive: true });
