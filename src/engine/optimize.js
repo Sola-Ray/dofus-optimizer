@@ -874,3 +874,22 @@ export function buildResult(cfg, chosen, runs, failed = null) {
     candidates: problem.items.length,
   };
 }
+
+// Élément automatique : un calcul par élément (le neutre est exclu), on garde celui qui fait le plus
+// de dégâts. En multi-élément le moteur maximise l'élément le plus faible : un mélange d'éléments
+// ne bat jamais le meilleur élément seul, il suffit donc de comparer les éléments un par un.
+// run = optimize ou optimizeLeveling ; en leveling, on compare la moyenne géométrique des paliers.
+export const AUTO_ELEMENTS = ['feu', 'eau', 'terre', 'air'];
+
+export async function withAutoElement(run, solver, game, config, onProgress = () => {}) {
+  if (!config.autoElement) return run(solver, game, config, onProgress);
+  const value = r => (r.tiers ? Math.exp(r.tiers.reduce((t, x) => t + Math.log(Math.max(x.result.score, 1e-9)), 0) / r.tiers.length) : r.score);
+  const runs = await Promise.all(AUTO_ELEMENTS.map(el => run(solver, game, { ...config, autoElement: false, elements: [el] },
+    p => onProgress({ ...p, mode: `${el}:${p.mode}`, subMode: p.mode, element: el }))
+    .then(r => ({ el, r, score: value(r) }), e => ({ el, error: e }))));
+  const ok = runs.filter(x => x.r);
+  if (!ok.length) throw runs[0].error;
+  const best = ok.reduce((a, b) => (b.score > a.score ? b : a));
+  best.r.autoElement = { chosen: best.el, runs: runs.map(x => ({ el: x.el, score: x.score ?? null, error: x.error?.message ?? null })) };
+  return best.r;
+}

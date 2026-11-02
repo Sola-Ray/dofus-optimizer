@@ -225,3 +225,4 @@ button.chip:hover { border-color: var(--gold); }
 .badge { flex: none; font-size: 11px; padding: 2px 8px; border-radius: 999px; }
 .badge.kept { background: var(--panel-2); color: var(--muted); }
 .badge.new { background: #2c3a24; color: #bfe3a8; }
+.chip:has(input:disabled) { opacity: .45; cursor: default; }

@@ -28,6 +28,7 @@ Par défaut : sans critique, sans forgemagie ni transcendance, parchemins régla
 - **Données** : API [DofusDB](https://api.dofusdb.fr). Le script récupère équipements, panoplies, classes, variantes de sorts, sorts et passifs, puis les compacte dans `public/game.json`.
 - **Moteur** : programme linéaire en nombres entiers résolu par [HiGHS](https://github.com/lovasoa/highs-js) (WebAssembly, dans un Web Worker). Les dégâts sont des produits de stats, donc non linéaires. Le moteur maximise leur logarithme par plans coupants : chaque itération ajoute une tangente au point trouvé, jusqu'à convergence (3 à 6 itérations).
 - **Objectif** : dégâts moyens attendus des sorts de l'élément, critique compris. Le moteur décide donc lui-même si jouer critique vaut le coup. En multi-élément, il maximise l'élément le plus faible.
+- **Élément automatique** : un calcul par élément (feu, eau, terre, air ; le neutre n'est pas proposé), on garde celui qui fait le plus de dégâts. Un mélange d'éléments ne peut pas battre le meilleur élément seul, puisque le multi-élément maximise l'élément le plus faible. En leveling, les éléments sont comparés sur la moyenne des dégâts des paliers. Les calculs tournent en parallèle, mais c'est environ 4 fois plus long.
 
 ## Règles modélisées
 

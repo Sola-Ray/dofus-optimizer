@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG } from './engine/optimize.js';
+import { DEFAULT_CONFIG, AUTO_ELEMENTS } from './engine/optimize.js';
 import { DEFAULT_LEVELING, suggestTiers } from './engine/leveling.js';
 import { simulateSpell, classSpells } from './engine/damage.js';
 import { PASSIVES } from './engine/passives.js';
@@ -42,7 +42,8 @@ function loadConfig() {
       // anciennes versions : 0 voulait dire « interdit »
       if (!fm.pctExo) Object.assign(fm, { pctExo: 1, pctExoOn: false });
       if (!fm.overBudget) Object.assign(fm, { overBudget: 20, overOn: false });
-      return { ...DEFAULT_CONFIG, mode: 'stuff', ...saved, fm, leveling: { ...structuredClone(DEFAULT_LEVELING), ...saved.leveling } };
+      const elements = (saved.elements || DEFAULT_CONFIG.elements).filter(el => AUTO_ELEMENTS.includes(el));
+      return { ...DEFAULT_CONFIG, mode: 'stuff', ...saved, elements, fm, leveling: { ...structuredClone(DEFAULT_LEVELING), ...saved.leveling } };
     }
   } catch { /* stockage indisponible */ }
   return { ...structuredClone(DEFAULT_CONFIG), mode: 'stuff', leveling: structuredClone(DEFAULT_LEVELING) };
@@ -63,7 +64,8 @@ let target = (() => {
 function levelingSection() {
   const L = config.leveling;
   const have = new Set(L.tiers.map(t => t.level));
-  const spells = config.elements.length ? suggestTiers(game, config.breedId, config.elements).filter(l => !have.has(l)) : [];
+  const els = config.autoElement ? AUTO_ELEMENTS : config.elements;
+  const spells = els.length ? suggestTiers(game, config.breedId, els).filter(l => !have.has(l)) : [];
   const cell = (i, k, t, label) => `<td><input type="number" min="${k === 'level' ? 1 : 0}" max="${k === 'level' ? 200 : 20}" data-tier="${i}" data-tk="${k}" value="${t[k]}" aria-label="${label}"></td>`;
   return `<section>
     <h2>Paliers</h2>
@@ -112,7 +114,8 @@ function renderConfig() {
         <input type="number" id="level" min="1" max="200" value="${config.level}">
       </label>`}
       <fieldset class="chips"><legend>Éléments joués</legend>
-        ${ELEMENTS.map(el => `<label class="chip el-${el}"><input type="checkbox" name="el" value="${el}" ${config.elements.includes(el) ? 'checked' : ''}>${EL_LABEL[el]}</label>`).join('')}
+        ${AUTO_ELEMENTS.map(el => `<label class="chip el-${el}"><input type="checkbox" name="el" value="${el}" ${config.elements.includes(el) && !config.autoElement ? 'checked' : ''} ${config.autoElement ? 'disabled' : ''}>${EL_LABEL[el]}</label>`).join('')}
+        <label class="chip" title="Calcule un stuff par élément et garde celui qui fait le plus de dégâts"><input type="checkbox" id="autoEl" ${config.autoElement ? 'checked' : ''}>Auto</label>
       </fieldset>
       <fieldset class="seg"><legend>Portée des attaques</legend>
         <label><input type="radio" name="attack" value="dist" ${config.attack === 'dist' ? 'checked' : ''}>Distance</label>
@@ -185,6 +188,7 @@ function onConfigChange(e) {
   let redraw = false;
   if (t.name === 'mode') { config.mode = t.value; redraw = true; }
   else if (t.id === 'breed') { config.breedId = Number(t.value); redraw = true; }
+  else if (t.id === 'autoEl') { config.autoElement = t.checked; redraw = true; }
   else if (t.name === 'el') { config.elements = [...root.querySelectorAll('input[name=el]:checked')].map(i => i.value); redraw = config.mode === 'leveling'; }
   else if (t.dataset.tier) {
     const tier = config.leveling.tiers[Number(t.dataset.tier)];
@@ -288,30 +292,38 @@ function stopProgress() {
 }
 
 function run() {
-  if (!config.elements.length) { setStatus('Choisis au moins un élément.', 'error'); return; }
+  if (!config.autoElement && !config.elements.length) { setStatus('Choisis au moins un élément.', 'error'); return; }
+  const nEl = config.autoElement ? AUTO_ELEMENTS.length : 1;
   $('#run').disabled = true;
   setStatus('Préparation du modèle…');
   if (config.mode === 'leveling') {
     if (!config.leveling.tiers.length) { setStatus('Ajoute au moins un palier.', 'error'); $('#run').disabled = false; return; }
     // leveling : sans critique (100 % critique n'est pas atteignable à bas niveau)
-    startProgress(config.leveling.tiers.length);
+    startProgress(config.leveling.tiers.length * nEl);
     worker.postMessage({ type: 'leveling', config: { ...config, critMode: 'noncrit' } });
     return;
   }
-  startProgress(config.critMode === 'auto' ? 2 : 1);
+  startProgress((config.critMode === 'auto' ? 2 : 1) * nEl);
   worker.postMessage({ type: 'run', config });
 }
 
 worker.onmessage = ({ data }) => {
   if (data.type === 'progress') {
-    // leveling : les paliers seuls d'abord, puis le modèle commun prend toute la barre
-    if (data.mode === 'joint' && !progress.modes.joint) Object.assign(progress, { modes: {}, count: 1 });
+    // leveling : les paliers seuls d'abord, puis le modèle commun de l'élément remplace ses paliers
+    const sub = data.subMode ?? data.mode;
+    const pre = data.element ? `${data.element}:` : '';
+    if (sub === 'joint' && !progress.modes[data.mode]) {
+      const tierKeys = Object.keys(progress.modes).filter(k => k.startsWith(`${pre}t`));
+      tierKeys.forEach(k => delete progress.modes[k]);
+      progress.count -= config.leveling.tiers.length - 1;
+    }
     progress.modes[data.mode] = data;
     progress.shown = Math.max(progress.shown, progressTarget());
     paintButton();
     if (data.value === undefined) return;
-    if (data.label) setStatus(`${data.label} · ${data.phase === 3 ? 'finitions' : `itération ${data.iter}`} · ${fmt(data.value)} dégâts moyens par sort${data.mode === 'joint' ? ' au dernier palier' : ''}`);
-    else setStatus(`${MODE_LABEL[data.mode]} · ${['', 'meilleurs items', 'tous les items', 'finitions'][data.phase]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
+    const el = data.element ? `${EL_LABEL[data.element]} · ` : '';
+    if (data.label) setStatus(`${el}${data.label} · ${data.phase === 3 ? 'finitions' : `itération ${data.iter}`} · ${fmt(data.value)} dégâts moyens par sort${sub === 'joint' ? ' au dernier palier' : ''}`);
+    else setStatus(`${el}${MODE_LABEL[sub]} · ${['', 'meilleurs items', 'tous les items', 'finitions'][data.phase]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
   } else if (data.type === 'result') {
     // termine visiblement à 100 % avant de rendre la main
     clearInterval(progress.timer);
@@ -439,6 +451,7 @@ function renderStuff() {
       ${Object.entries(r.elementScores).map(([el, v]) => `<div class="score el-${el}"><span>${EL_LABEL[el]}</span><strong>${fmt(v)}</strong><small>dégâts moyens par sort (sans cible)</small></div>`).join('')}
       <div class="score"><span>Points de carac.</span><strong>${Object.entries(r.points).map(([k, v]) => `${v} ${STAT_LABEL[k]}`).join(', ') || '—'}</strong><small>${r.pointsCost} / ${r.pointsMax} points utilisés</small></div>
     </div>
+    ${autoBanner()}
     ${critBanner(r)}
     ${(r.exoNotes || []).length ? `<ul class="exo-notes">${r.exoNotes.map(n => `<li class="${n.used ? 'used' : 'skip'}">${esc(n.text)}</li>`).join('')}</ul>` : ''}
     <div class="items">
@@ -467,6 +480,15 @@ function renderStuff() {
     renderStuff();
     renderSim();
   });
+}
+
+function autoBanner() {
+  const a = lastResult.autoElement;
+  if (!a) return '';
+  const what = lastResult.tiers ? 'moyenne des paliers' : 'dégâts moyens';
+  const others = a.runs.filter(x => x.el !== a.chosen).map(x => `${EL_LABEL[x.el]} : ${x.score == null ? 'aucun stuff' : `<strong>${fmt(x.score)}</strong>`}`).join(' · ');
+  const best = a.runs.find(x => x.el === a.chosen);
+  return `<p class="banner">Élément choisi automatiquement : <strong>${EL_LABEL[a.chosen]}</strong> (${what} ${fmt(best.score)}). ${others}</p>`;
 }
 
 function critBanner(r) {
