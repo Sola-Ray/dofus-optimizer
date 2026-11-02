@@ -6,7 +6,7 @@
 // tangente au point trouvé, ce qui resserre la borne jusqu'à converger.
 import {
   BASE, STAT_POINTS, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
-  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
+  FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
 import { classSpells, elementSpells, score, elementScores } from './damage.js';
@@ -19,9 +19,12 @@ export const DEFAULT_CONFIG = {
   scenario: 'moyen', // 'moyen' | 'burst'
   fullScroll: true,
   min: { pa: 12, pm: 6 }, // minimums de stats (n'importe quelle clé, + resMoy)
-  // exoPct : % dommages (sorts, distance, mêlée) ajoutables par item, toutes lignes confondues
-  // transcendance : un item reçoit soit over/exo, soit une rune de transcendance (puis plus de FM)
-  fm: { overs: true, exos: true, exoPct: 1, exoPA: true, exoPM: true, exoPO: false, transcendance: true },
+  // Forgemagie réaliste : une seule finition par item, choisie par le moteur parmi celles autorisées.
+  //   pctExo : exo % dommages (sorts, distance, mêlée), 0 = interdit
+  //   overBudget : poids max d'un over (ou exo léger de stat) sur une ligne, 0 = interdit
+  //   transcendance : runes de transcendance (verrouillent l'item)
+  fm: { pctExo: 1, overBudget: 20, exoPA: true, exoPM: true, exoPO: false, transcendance: true },
+  rollQuality: 1, // 1 = jets parfaits, 0.95, 0.85…
   // 'auto' : compare 100 % critique et sans critique ; 'crit' ; 'noncrit'
   critMode: 'auto',
   minLevel: 1,
@@ -51,8 +54,17 @@ function passiveMatters(p) {
   return typeof v === 'function' || Object.keys(v).length > 0 || Object.keys(e.burst || {}).length > 0;
 }
 
+// Stats forgemageables utiles : celles des dégâts et celles sous contrainte
+function fmKeys(cfg) {
+  const k = new Set(['do', 'puissance', 'crit', 'doCrit', 'pctSorts', cfg.attack === 'melee' ? 'pctMelee' : 'pctDist', ...SINGLE_EXO]);
+  for (const el of cfg.elements) { k.add(ELEMENT_STAT[el]); k.add(ELEMENT_DO[el]); }
+  for (const m of Object.keys(cfg.min)) if (m === 'resMoy') RES_KEYS.forEach(r => k.add(r)); else k.add(m);
+  return k;
+}
+
 export function prepare(game, cfg) {
   const keys = relevantKeys(cfg);
+  const fmable = fmKeys(cfg);
   const banned = new Set(cfg.banned);
   const forced = new Set(cfg.forced);
   const w = game.runeWeight;
@@ -64,20 +76,23 @@ export function prepare(game, cfg) {
   let items = game.items.filter(it => !banned.has(it.id) && (forced.has(it.id) || it.l >= cfg.minLevel || it.s === 'dofus'));
   items = items.map(it => {
     const crit = parseCriteria(it.c);
-    const fmCap = {};
+    // Qualité des jets : 1 = jets parfaits, sinon min + q × (max − min)
+    const st = { ...it.st };
+    if (cfg.rollQuality < 1) for (const [k, [lo, hi]] of Object.entries(it.r || {})) st[k] -= Math.round((1 - cfg.rollQuality) * (hi - lo));
+    const fmCap = {}, fmKind = {};
     if (FM_SLOTS.has(it.s)) {
       for (const k of keys) {
-        if (!w[k]) continue;
-        const nat = it.st[k] || 0;
+        if (!w[k] || !fmable.has(k)) continue;
+        const nat = st[k] || 0;
         if (nat < 0) continue;
-        let cap = 0;
-        if (SINGLE_EXO.includes(k)) cap = nat === 0 && cfg.fm['exo' + k.toUpperCase()] ? 1 : 0;
-        else if (PCT_KEYS.includes(k)) cap = Math.min(cfg.fm.exoPct, lineCap(w[k], nat) - nat);
-        else if (nat > 0 ? cfg.fm.overs : cfg.fm.exos) cap = lineCap(w[k], nat) - nat;
-        if (cap > 0) fmCap[k] = cap;
+        let cap = 0, kind;
+        if (SINGLE_EXO.includes(k)) { cap = nat === 0 && cfg.fm['exo' + k.toUpperCase()] ? 1 : 0; kind = 'heavy'; }
+        else if (PCT_KEYS.includes(k)) { cap = Math.min(cfg.fm.pctExo, lineCap(w[k], nat) - nat); kind = 'pct'; }
+        else { cap = Math.min(lineCap(w[k], nat) - nat, Math.floor(cfg.fm.overBudget / w[k])); kind = 'over'; }
+        if (cap > 0) { fmCap[k] = cap; fmKind[k] = kind; }
       }
     }
-    return { ...it, crit, fmCap, passive: it.p && passiveMatters(it.p) ? it.p : 0 };
+    return { ...it, st, crit, fmCap, fmKind, passive: it.p && passiveMatters(it.p) ? it.p : 0 };
   });
 
   // Élagage : un item « simple » dominé par un autre du même emplacement sur toutes les stats utiles
@@ -238,24 +253,31 @@ function buildLP(problem, cuts) {
   for (const c of CARACS) for (const sv of segVars[c]) generals.push(sv.v);
   generals.push('pv');
 
-  // Forgemagie item par item : 101 de poids max en over + exo, plafond par ligne en borne
+  // Forgemagie réaliste : une seule finition par item, au choix du moteur
+  //   heavy : exo PA / PM / PO     pct : exo % dommages     ov : over (budget de poids)     tr : transcendance
   for (const it of items) {
     const ks = Object.keys(it.fmCap);
-    if (!ks.length) continue;
-    let wr = ` fmw${it.idx}:`;
-    for (const k of ks) {
-      wr += term(w[k], `e${it.idx}_${k}`);
-      bounds.push(` 0 <= e${it.idx}_${k} <= ${it.fmCap[k]}`);
+    const touches = [];
+    for (const k of ks) bounds.push(` 0 <= e${it.idx}_${k} <= ${it.fmCap[k]}`);
+    const ov = ks.filter(k => it.fmKind[k] === 'over');
+    if (ov.length) {
+      rows.push(` fmov${it.idx}:${ov.map(k => term(w[k], `e${it.idx}_${k}`)).join('')} - ${cfg.fm.overBudget} ov${it.idx} <= 0`);
+      binaries.push(`ov${it.idx}`); touches.push(`ov${it.idx}`);
     }
-    rows.push(`${wr} - ${FM_ITEM_WEIGHT} x${it.idx}${transOk(it) ? ` + ${FM_ITEM_WEIGHT} tr${it.idx}` : ''} <= 0`);
-    const pct = ks.filter(k => PCT_KEYS.includes(k));
-    if (pct.length > 1) rows.push(` fmpct${it.idx}:${pct.map(k => ` + e${it.idx}_${k}`).join('')} - ${cfg.fm.exoPct} x${it.idx} <= 0`);
+    const pct = ks.filter(k => it.fmKind[k] === 'pct');
+    if (pct.length) {
+      rows.push(` fmpe${it.idx}:${pct.map(k => ` + e${it.idx}_${k}`).join('')} - ${cfg.fm.pctExo} pe${it.idx} <= 0`);
+      binaries.push(`pe${it.idx}`); touches.push(`pe${it.idx}`);
+    }
+    for (const k of ks.filter(k => it.fmKind[k] === 'heavy')) touches.push(`e${it.idx}_${k}`);
+    if (transOk(it)) touches.push(`tr${it.idx}`);
+    if (touches.length) rows.push(` touch${it.idx}:${touches.map(v => ` + ${v}`).join('')} - x${it.idx} <= 0`);
   }
-  // Transcendance : tr = item transcendé (exclut over/exo), n_k = nombre de runes de la stat k
+  // Transcendance : tr = item transcendé, n_k = nombre de runes de la stat k
   const transKeys = Object.keys(problem.trans);
   const trItems = items.filter(transOk);
   if (transKeys.length && trItems.length) {
-    for (const it of trItems) { rows.push(` trx${it.idx}: tr${it.idx} - x${it.idx} <= 0`); binaries.push(`tr${it.idx}`); }
+    for (const it of trItems) binaries.push(`tr${it.idx}`);
     rows.push(` trsum:${transKeys.map(k => ` + n_${k}`).join('')}${trItems.map(it => ` - tr${it.idx}`).join('')} <= 0`);
     for (const k of transKeys) {
       // la rune demande un item de niveau suffisant
@@ -404,57 +426,83 @@ function makeCuts(problem, stats, sol) {
   return cuts;
 }
 
-// ---------- Répartition exacte de la forgemagie item par item ----------
+// ---------- Finitions exactes item par item ----------
 
-function distributeFM(highs, problem, sol, grad) {
-  const { runeWeight: w, cfg } = problem;
-  const fmItems = sol.items.filter(it => FM_SLOTS.has(it.s) && Object.keys(it.fmCap).length && !sol.transItems?.has(it.id));
-  const keys = Object.keys(sol.fm);
-  if (!fmItems.length || !keys.length) return { perItem: {}, fm: {} };
-  const rows = [], bounds = [], gens = [];
+// Une fois les items choisis, on décide exactement la finition de chacun (une seule par item) :
+// over sur une ligne, exo % dommages, exo PA/PM/PO ou rune de transcendance. Les minimums
+// (PA, PM, critique visé…) doivent rester tenus ; le reste maximise le gain de dégâts linéarisé.
+async function finishItems(solver, problem, sol, grad) {
+  const { cfg } = problem;
+  const items = sol.items.filter(it => FM_SLOTS.has(it.s));
+  const base = solutionStats(problem, { ...sol, fm: {}, trans: {} });
+  const rows = [], bounds = [], bins = [], gens = [];
+  const contrib = {}; // clé -> liste de [coef, variable]
+  const addC = (k, c, v) => (contrib[k] ||= []).push([c, v]);
   let obj = ' obj:';
-  for (const it of fmItems) {
-    let wr = ` w${it.idx}:`;
-    for (const k of keys) {
-      const cap = it.fmCap[k];
-      if (!cap) continue;
-      const v = `e${it.idx}_${k}`;
-      // priorité aux stats sous contrainte, puis gradient des dégâts
-      const constrained = cfg.min[k] !== undefined || (k === 'crit' && problem.mode === 'crit');
-      const prio = (constrained ? 1000 : 0) + (grad[k] || 0) * 1000 + 1e-3;
-      obj += term(prio, v);
-      wr += term(w[k], v);
-      bounds.push(` 0 <= ${v} <= ${cap}`);
-      gens.push(v);
+  const value = k => (grad[k] || 0) * 1000 + 1e-4;
+  const heavy = {};
+  for (const it of items) {
+    const opts = [];
+    for (const [k, cap] of Object.entries(it.fmCap)) {
+      const kind = it.fmKind[k];
+      if (kind === 'over') {
+        const o = `o${it.idx}_${k}`, e = `e${it.idx}_${k}`;
+        rows.push(` oc${it.idx}_${k}: ${e} - ${cap} ${o} <= 0`);
+        bounds.push(` 0 <= ${e} <= ${cap}`);
+        gens.push(e); bins.push(o); opts.push(o);
+        addC(k, 1, e); obj += term(value(k), e);
+      } else {
+        const b = `${kind === 'pct' ? 'p' : 'h'}${it.idx}_${k}`;
+        bins.push(b); opts.push(b);
+        addC(k, cap, b); obj += term(value(k) * cap, b);
+        if (kind === 'heavy') (heavy[k] ||= []).push(b);
+      }
     }
-    rows.push(`${wr} <= ${FM_ITEM_WEIGHT}`);
-    const pct = keys.filter(k => it.fmCap[k] && PCT_KEYS.includes(k));
-    if (pct.length > 1) rows.push(` p${it.idx}:${pct.map(k => ` + e${it.idx}_${k}`).join('')} <= ${cfg.fm.exoPct}`);
+    for (const r of Object.values(problem.trans)) {
+      if (it.l < r.l) continue;
+      const t = `t${it.idx}_${r.k}`;
+      bins.push(t); opts.push(t);
+      addC(r.k, r.v, t); obj += term(value(r.k) * r.v, t);
+    }
+    if (opts.length) rows.push(` one${it.idx}:${opts.map(v => ` + ${v}`).join('')} <= 1`);
   }
-  for (const k of keys) {
-    const vars = fmItems.filter(it => it.fmCap[k]).map(it => `e${it.idx}_${k}`);
-    if (vars.length) rows.push(` tot_${k}:${vars.map(v => ` + ${v}`).join('')} <= ${Math.ceil(sol.fm[k] - 1e-6)}`);
-  }
-  const lp = ['Maximize', obj, 'Subject To', ...rows, 'Bounds', ...bounds, 'General', ' ' + gens.join(' '), 'End'].join('\n');
-  const r = highs.solve(lp, { time_limit: 10 });
-  const perItem = {}, fm = {};
-  for (const it of fmItems) for (const k of keys) {
-    const val = Math.round(r.Columns?.[`e${it.idx}_${k}`]?.Primal ?? 0);
-    if (val > 0) { (perItem[it.id] ||= {})[k] = val; fm[k] = (fm[k] || 0) + val; }
-  }
-  return { perItem, fm };
-}
+  for (const [k, vs] of Object.entries(heavy)) rows.push(` heavy_${k}:${vs.map(v => ` + ${v}`).join('')} <= 1`);
 
-// ---------- Attribution des runes de transcendance ----------
+  const mins = { ...cfg.min };
+  if (problem.mode === 'crit' && problem.critTarget > 0) mins.crit = Math.max(mins.crit || 0, problem.critTarget);
+  const minRows = [];
+  for (const [k, v] of Object.entries(mins)) {
+    if (k === 'resMoy') {
+      const terms = RES_KEYS.flatMap(r => contrib[r] || []).map(([c, x]) => term(c / 5, x)).join('');
+      const have = RES_KEYS.reduce((t, r) => t + (base[r] || 0), 0) / 5;
+      if (terms) minRows.push(` m_resMoy:${terms} >= ${num(v - have)}`);
+    } else if (contrib[k]) minRows.push(` m_${k}:${contrib[k].map(([c, x]) => term(c, x)).join('')} >= ${num(v - (base[k] || 0))}`);
+  }
+  if (!bins.length) return { perItem: {}, transPerItem: {}, fm: {} };
 
-// n_k runes par stat sur les items transcendés : les runes de plus haut niveau vont aux items de plus haut niveau
-function assignTranscendance(problem, sol) {
-  const items = sol.items.filter(it => sol.transItems?.has(it.id)).sort((a, b) => b.l - a.l);
-  const runes = Object.entries(sol.trans || {}).flatMap(([k, n]) => Array(n).fill(problem.trans[k]))
-    .sort((a, b) => b.l - a.l);
-  const out = {};
-  runes.forEach((r, i) => { if (items[i] && items[i].l >= r.l) out[items[i].id] = { n: r.n, k: r.k, v: r.v }; });
-  return out;
+  const build = withMins => ['Maximize', obj, 'Subject To', ...rows, ...(withMins ? minRows : []),
+    ...(rows.length || minRows.length ? [] : [' dummy: 0 x0 >= 0']),
+    'Bounds', ...bounds, ...(gens.length ? ['General', ' ' + gens.join(' ')] : []), 'Binary', ' ' + bins.join(' '), 'End'].join('\n');
+  let r = await solver.solve(build(true), { time_limit: 10 });
+  if (r.Status !== 'Optimal') r = await solver.solve(build(false), { time_limit: 10 });
+
+  const v = name => r.Columns?.[name]?.Primal ?? 0;
+  const perItem = {}, transPerItem = {}, fm = {};
+  const add = (id, k, val) => { (perItem[id] ||= {})[k] = val; fm[k] = (fm[k] || 0) + val; };
+  for (const it of items) {
+    for (const [k, cap] of Object.entries(it.fmCap)) {
+      const kind = it.fmKind[k];
+      if (kind === 'over') { const e = Math.round(v(`e${it.idx}_${k}`)); if (e > 0) add(it.id, k, e); }
+      else if (v(`${kind === 'pct' ? 'p' : 'h'}${it.idx}_${k}`) > 0.5) add(it.id, k, cap);
+    }
+    for (const rn of Object.values(problem.trans)) {
+      if (it.l >= rn.l && v(`t${it.idx}_${rn.k}`) > 0.5) {
+        transPerItem[it.id] = { n: rn.n, k: rn.k, v: rn.v };
+        fm[rn.k] = (fm[rn.k] || 0) + rn.v;
+      }
+    }
+  }
+  return { perItem, transPerItem, fm };
 }
 
 // ---------- Comparatif des options de forgemagie ----------
@@ -484,7 +532,7 @@ function fmComparison(problem, stats, passives) {
 
 // ---------- Boucle principale ----------
 
-function solveMode(highs, game, cfg, mode, onProgress) {
+async function solveMode(solver, game, cfg, mode, onProgress) {
   const problem = prepare(game, cfg);
   problem.setsById = game.sets;
   problem.mode = mode;
@@ -499,7 +547,7 @@ function solveMode(highs, game, cfg, mode, onProgress) {
   let best = null, upper = Infinity;
   for (let iter = 0; iter < cfg.maxIterations; iter++) {
     const lp = buildLP(problem, cuts);
-    const r = highs.solve(lp, { time_limit: 30, mip_rel_gap: 1e-4 });
+    const r = await solver.solve(lp, { time_limit: 30, mip_rel_gap: 1e-4 });
     if (r.Status !== 'Optimal' && r.Status !== 'Time limit reached') {
       const why = mode === 'crit' ? `Impossible d'atteindre ${problem.critTarget} % critique avec ces minimums.` : 'Aucun stuff ne respecte ces minimums.';
       throw new Error(r.Status === 'Infeasible' ? why : `Solveur : ${r.Status}`);
@@ -519,25 +567,22 @@ function solveMode(highs, game, cfg, mode, onProgress) {
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
   const grad = makeCuts(problem, bestStats, best)[0]?.g || {};
-  const { perItem, fm } = distributeFM(highs, problem, best, grad);
-  const transPerItem = assignTranscendance(problem, best);
-  const final = { ...best, fm };
+  const { perItem, transPerItem, fm } = await finishItems(solver, problem, best, grad);
+  const final = { ...best, fm, trans: {} };
   const stats = solutionStats(problem, final);
   const ctx = ctxOf(problem, passives, true);
   return { problem, final, stats, perItem, transPerItem, passives, realScore: score(stats, ctx), ctx };
 }
 
-export function optimize(highs, game, config, onProgress = () => {}) {
+// solver.solve(lp, options) -> Promise du résultat HiGHS ; les modes tournent en parallèle
+export async function optimize(solver, game, config, onProgress = () => {}) {
   const cfg = { ...DEFAULT_CONFIG, ...config, fm: { ...DEFAULT_CONFIG.fm, ...config.fm }, min: { ...(config.min ?? DEFAULT_CONFIG.min) } };
   if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
 
   const modes = cfg.critMode === 'auto' ? ['crit', 'noncrit'] : [cfg.critMode];
-  const runs = [];
   let lastError;
-  for (const mode of modes) {
-    try { runs.push({ mode, ...solveMode(highs, game, cfg, mode, onProgress) }); }
-    catch (e) { lastError = e; }
-  }
+  const runs = (await Promise.all(modes.map(mode => solveMode(solver, game, cfg, mode, onProgress)
+    .then(r => ({ mode, ...r }), e => { lastError = e; return null; })))).filter(Boolean);
   if (!runs.length) throw lastError;
   const chosen = runs.reduce((a, b) => (b.realScore > a.realScore ? b : a));
   const { problem, final, stats, perItem, transPerItem, passives, ctx } = chosen;
@@ -550,7 +595,7 @@ export function optimize(highs, game, config, onProgress = () => {}) {
   return {
     config: cfg,
     items: final.items.map(it => ({
-      id: it.id, n: it.n, s: it.s, l: it.l, img: it.img, set: it.set, st: it.st, c: it.c, passive: it.p || 0,
+      id: it.id, n: it.n, s: it.s, l: it.l, img: it.img, set: it.set, st: it.st, r: it.r, c: it.c, passive: it.p || 0,
       fm: perItem[it.id] || {}, trans: transPerItem[it.id] || null,
     })),
     points: final.points,

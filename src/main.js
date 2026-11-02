@@ -33,7 +33,10 @@ const STORE = 'dofus-optimizer-config';
 function loadConfig() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORE));
-    if (saved) return { ...DEFAULT_CONFIG, ...saved, fm: { ...DEFAULT_CONFIG.fm, ...saved.fm } };
+    if (saved) {
+      const fm = Object.fromEntries(Object.keys(DEFAULT_CONFIG.fm).map(k => [k, saved.fm?.[k] ?? DEFAULT_CONFIG.fm[k]]));
+      return { ...DEFAULT_CONFIG, ...saved, fm };
+    }
   } catch { /* stockage indisponible */ }
   return structuredClone(DEFAULT_CONFIG);
 }
@@ -84,16 +87,21 @@ function renderConfig() {
     </section>
     <section>
       <h2>Forgemagie</h2>
-      <label class="field">% dommages (sorts, distance, mêlée) par item
-        <select id="exoPct">${[0, 1, 2, 3, 4, 5, 6].map(v => `<option value="${v}" ${v === config.fm.exoPct ? 'selected' : ''}>${v ? v + ' %' : 'aucun'}</option>`).join('')}</select>
+      <p class="hint">Une seule finition par item, comme en vrai : le moteur choisit item par item parmi celles que tu autorises.</p>
+      <label class="check"><input type="checkbox" data-fm="transcendance" ${config.fm.transcendance ? 'checked' : ''}>Runes de transcendance (Ta Do Per So, Pata Do Cri, Pata Cri…)</label>
+      <label class="field">Exo % dommages (sorts, distance, mêlée)
+        <select id="pctExo">${[[0, 'interdit'], [1, '1 %'], [2, '2 % (très rare)']].map(([v, l]) => `<option value="${v}" ${v === config.fm.pctExo ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </label>
-      <label class="check"><input type="checkbox" data-fm="overs" ${config.fm.overs ? 'checked' : ''}>Overs (pousser une ligne existante)</label>
-      <label class="check"><input type="checkbox" data-fm="exos" ${config.fm.exos ? 'checked' : ''}>Exos de stats (ajouter une ligne absente)</label>
-      <label class="check"><input type="checkbox" data-fm="transcendance" ${config.fm.transcendance ? 'checked' : ''}>Runes de transcendance (à la place de l'over/exo sur un item)</label>
+      <label class="field">Over / exo de stat sur une ligne
+        <select id="overBudget">${[[0, 'interdit'], [10, 'petit (poids 10 : +10 carac, +1 crit…)'], [20, 'moyen (poids 20)'], [30, 'gros (poids 30)'], [50, 'énorme (poids 50)']].map(([v, l]) => `<option value="${v}" ${v === config.fm.overBudget ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </label>
       <div class="chips">
         ${['PA', 'PM', 'PO'].map(k => `<label class="chip"><input type="checkbox" data-fm="exo${k}" ${config.fm['exo' + k] ? 'checked' : ''}>Exo ${k}</label>`).join('')}
       </div>
-      <p class="hint">Plafonds du jeu : 101 de poids par item (over + exo), 101 par ligne, un seul exo PA, PM et PO compté.</p>
+      <p class="hint">Un seul exo PA, PM et PO compte sur l'ensemble du stuff. Une transcendance verrouille l'item.</p>
+      <label class="field">Qualité des jets des items
+        <select id="rollQuality">${[[1, 'parfaits'], [0.95, 'quasi parfaits (95 %)'], [0.85, 'corrects (85 %)']].map(([v, l]) => `<option value="${v}" ${v === config.rollQuality ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </label>
     </section>
     <section>
       <h2>Items</h2>
@@ -126,7 +134,9 @@ function bindConfig() {
     else if (t.name === 'scenario') config.scenario = t.value;
     else if (t.name === 'critMode') config.critMode = t.value;
     else if (t.id === 'scroll') config.fullScroll = t.checked;
-    else if (t.id === 'exoPct') config.fm.exoPct = Number(t.value);
+    else if (t.id === 'pctExo') config.fm.pctExo = Number(t.value);
+    else if (t.id === 'overBudget') config.fm.overBudget = Number(t.value);
+    else if (t.id === 'rollQuality') config.rollQuality = Number(t.value);
     else if (t.dataset.fm) config.fm[t.dataset.fm] = t.checked;
     else if (t.dataset.min) {
       if (t.value === '') delete config.min[t.dataset.min];
@@ -167,13 +177,14 @@ function run() {
 
 worker.onmessage = ({ data }) => {
   if (data.type === 'progress') {
-    setStatus(`${MODE_LABEL[data.mode]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort · ${data.items} items candidats`);
+    setStatus(`${MODE_LABEL[data.mode]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort · ${data.cores} cœurs`);
   } else if (data.type === 'result') {
     $('#run').disabled = false;
     lastResult = data.result;
     selectedSpell = null;
     const warn = [...data.result.violations.map(v => `${STAT_LABEL[v.key] || v.key} < ${v.min}`), ...data.result.unmetConditions.map(n => `condition non remplie : ${n}`)];
-    setStatus(warn.length ? `Stuff trouvé, avec des réserves : ${warn.join(', ')}` : 'Stuff trouvé.', warn.length ? 'warn' : 'ok');
+    const took = ` (${Math.round(data.result.seconds)} s sur ${data.result.cores} cœurs)`;
+    setStatus(warn.length ? `Stuff trouvé${took}, avec des réserves : ${warn.join(', ')}` : `Stuff trouvé${took}.`, warn.length ? 'warn' : 'ok');
     renderStuff();
     renderSim();
   } else if (data.type === 'error') {
@@ -190,9 +201,22 @@ function setStatus(text, kind = '') {
 
 // ---------- Onglet Stuff ----------
 
-function statLines(st, cls = '') {
+// Icônes des stats comme en jeu ; DofusDB n'a pas toutes les icônes, on retombe sur la plus proche
+const ICON_FALLBACK = {
+  resFeu: 'tx_intelligence', resEau: 'tx_chance', resTerre: 'tx_strength', resAir: 'tx_agility', resNeutre: 'tx_neutral',
+  rfTerre: 'tx_strength', pctSorts: 'tx_damagesPercent', pctDist: 'tx_damagesPercent', pctMelee: 'tx_damagesPercent',
+  pctArmes: 'tx_damagesPercent', pctFinaux: 'tx_damagesPercent', resDist: 'tx_pushReduction', resMelee: 'tx_pushReduction',
+  resSorts: 'tx_pushReduction', resArmes: 'tx_pushReduction',
+};
+function statIcon(k) {
+  const asset = ICON_FALLBACK[k] || game.statIcon?.[k];
+  return asset ? `<img class="sicon" src="${import.meta.env.BASE_URL}icons/${asset}.png" alt="" width="18" height="18">` : '<span class="sicon"></span>';
+}
+
+// Lignes d'effets façon infobulle du jeu : icône, valeur, libellé, [jet min à max]
+function statLines(st, cls = '', rolls = {}) {
   return Object.entries(st).filter(([k]) => STAT_LABEL[k])
-    .map(([k, v]) => `<li class="${cls} ${v < 0 ? 'neg' : ''}">${v > 0 ? '+' : ''}${fmt(v)} ${esc(STAT_LABEL[k])}</li>`).join('');
+    .map(([k, v]) => `<li class="${cls} ${v < 0 ? 'neg' : 'pos'}">${statIcon(k)}<b>${v > 0 && cls ? '+' : ''}${fmt(v)}</b> ${esc(STAT_LABEL[k])}${rolls[k] ? ` <span class="roll">[${rolls[k][0]} à ${rolls[k][1]}]</span>` : ''}</li>`).join('');
 }
 
 function renderStuff() {
@@ -222,16 +246,16 @@ function renderStuff() {
           <header><img src="${ITEM_IMG(it.img)}" alt="" width="48" height="48" loading="lazy">
             <div><small>${SLOT_LABEL[it.s]} · niv. ${it.l}</small><h3>${esc(it.n)}</h3>${it.set ? `<small class="set">${esc(game.sets[it.set]?.n || '')}</small>` : ''}</div>
           </header>
-          <ul class="lines">${statLines(it.st)}</ul>
+          <ul class="lines">${statLines(it.st, '', it.r || {})}</ul>
           ${Object.keys(it.fm).length ? `<ul class="lines fm"><li class="fm-title">Forgemagie</li>${statLines(it.fm, 'fm')}</ul>` : ''}
-          ${it.trans ? `<ul class="lines fm"><li class="fm-title">Transcendance</li><li class="fm">${esc(it.trans.n)} : +${it.trans.v} ${esc(STAT_LABEL[it.trans.k])}</li></ul>` : ''}
+          ${it.trans ? `<ul class="lines fm"><li class="fm-title">Transcendance · ${esc(it.trans.n)}</li>${statLines({ [it.trans.k]: it.trans.v }, 'fm')}<li class="locked">Empêche les futures forgemagies</li></ul>` : ''}
           ${it.c ? `<p class="cond">Condition : ${esc(it.c)}</p>` : ''}
         </article>`).join('')}
     </div>
     ${r.setBonuses.length ? `<h2>Bonus de panoplie</h2><div class="sets">${r.setBonuses.map(b => `<div class="setbox"><strong>${esc(b.n)}</strong> (${b.count} items)<ul class="lines">${statLines(b.bonus)}</ul></div>`).join('')}</div>` : ''}
     <h2>Caractéristiques finales</h2>
     <div class="stat-groups">
-      ${groups.map(([title, keys]) => `<div class="stat-group"><h3>${title}</h3><dl>${keys.map(k => `<dt>${STAT_LABEL[k]}</dt><dd>${fmt(s[k] || 0)}</dd>`).join('')}</dl></div>`).join('')}
+      ${groups.map(([title, keys]) => `<div class="stat-group"><h3>${title}</h3><dl>${keys.map(k => `<dt>${statIcon(k)}${STAT_LABEL[k]}</dt><dd>${fmt(s[k] || 0)}</dd>`).join('')}</dl></div>`).join('')}
     </div>
     <h2>Valeur des options de forgemagie sur ce stuff</h2>
     <p class="hint">Gain de dégâts si on ajoutait cette seule option au stuff final. Les overs sont comparés à poids égal à 1 % de dommages (15).</p>

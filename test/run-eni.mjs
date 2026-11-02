@@ -7,7 +7,7 @@ import { STAT_LABEL } from '../src/engine/rules.js';
 const game = JSON.parse(readFileSync(new URL('../public/game.json', import.meta.url), 'utf8'));
 const highs = await highsLoader();
 const t0 = Date.now();
-const res = optimize(highs, game, { breedId: 7, elements: ['feu'], min: { pa: 12, pm: 6 }, critMode: process.argv[2] || 'auto', ...JSON.parse(process.argv[3] || '{}') },
+const res = await optimize({ solve: async (lp, o) => highs.solve(lp, o) }, game, { breedId: 7, elements: ['feu'], min: { pa: 12, pm: 6 }, critMode: process.argv[2] || 'auto', ...JSON.parse(process.argv[3] || '{}') },
   p => console.log(`[${p.mode}] iter ${p.iter} score ${p.value.toFixed(1)} (${p.items} candidats)`));
 console.log(`${((Date.now() - t0) / 1000).toFixed(1)} s`);
 console.log('critique', JSON.stringify(res.crit));

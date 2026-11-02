@@ -26,7 +26,9 @@ Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`.
 ## Règles modélisées
 
 - Formule : `floor(jet × (100 + carac + puissance) / 100 + Dommages + Dommages élément [+ Dommages critiques])`, puis `× (1 + % sorts) × (1 + % distance ou mêlée)`, puis les dommages finaux, puis la résistance fixe et la résistance en % de la cible.
-- Forgemagie : poids des runes lus dans les données du jeu (`effectPowerRate`). Une ligne ne dépasse pas 101 de poids, sauf si son jet naturel est plus haut. Un item ne porte pas plus de 101 de poids en over + exo. Un seul exo PA, un seul exo PM et un seul exo PO comptent sur l'ensemble du stuff. Le réglage « % dommages par item » plafonne les lignes de % sorts, distance et mêlée réunies.
+- Forgemagie réaliste : lignes au jet max (ou à 95 / 85 % selon le réglage), puis **une seule finition par item**, choisie par le moteur parmi celles autorisées : exo PA / PM / PO (un seul de chaque sur le stuff), exo 1 % de dommages (sorts, distance ou mêlée), over sur une ligne dans un budget de poids, ou rune de transcendance (verrouille l'item). Poids des runes lus dans les données du jeu (`effectPowerRate`), une ligne ne dépasse pas 101 de poids.
+- Critique : en mode auto, le moteur calcule un stuff qui met tous les sorts de l'élément à 100 % de critique et un stuff sans critique, puis garde le meilleur. On peut aussi forcer l'un ou l'autre.
+- Calcul multi-cœurs : un pool de solveurs (un par cœur, 8 au plus). Chaque résolution est lancée en course avec des graines différentes, la plus rapide gagne, et les deux modes de critique tournent en parallèle.
 - Personnage niveau 200 : 995 points de caractéristique avec les paliers de coût de la classe, +100 par parchemin, 7 PA et 3 PM de base.
 - Conditions de port (`CS>299`, `CP<12|CM<6`…) respectées par le solveur. Les conditions hors stats (quêtes, métiers…) sont supposées remplies. Les objets réservés aux MJ sont exclus.
 
@@ -34,4 +36,4 @@ Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`.
 
 - **Passifs** des Dofus, prysmaradites et légendaires : traduits à la main dans `src/engine/passives.js`, en deux scénarios (combat moyen sur 5 tours, tour de burst). Chaque hypothèse est affichée sous le stuff.
 - **Sorts** : seuls les effets directs de dégâts, de vol de vie et de soin sont simulés. Les effets déclenchés par un autre sort, les glyphes, les poisons et les états ne le sont pas.
-- **Plafond de 101 par item** : il vient d'une seule source communautaire, et la place exacte des % sorts / distance avant les résistances reste à confirmer en jeu.
+- **Taux de réussite de la forgemagie** : Ankama ne publie pas de formule. Le modèle « une finition par item » et les budgets d'over viennent de guides communautaires (Gamosaurus, Huzounet, Papycha, Tofus). La place exacte des % sorts / distance avant les résistances reste à confirmer en jeu.

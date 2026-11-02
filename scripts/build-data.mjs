@@ -157,7 +157,24 @@ const transcendance = runes.flatMap(r => {
   return e ? [{ id: r.id, n: fr(r.name), l: r.level, k: e[0], v: e[1] }] : [];
 });
 
+// Icônes des stats (comme en jeu), copiées dans public/icons pour ne pas dépendre de dofusdb.fr
+const characteristics = await read('characteristics');
+const statIcon = {};
+for (const [id, key] of Object.entries(CHARAC)) {
+  const asset = characteristics.find(c => c.id === Number(id))?.asset;
+  if (asset && !statIcon[key]) statIcon[key] = asset;
+}
+const ICONS = new URL('../public/icons/', import.meta.url);
+await mkdir(ICONS, { recursive: true });
+for (const asset of new Set(Object.values(statIcon))) {
+  const file = new URL(`${asset}.png`, ICONS);
+  try { await readFile(file); continue; } catch { /* à télécharger */ }
+  const res = await fetch(`https://dofusdb.fr/icons/characteristics/${asset}.png`);
+  if (res.ok) await writeFile(file, Buffer.from(await res.arrayBuffer()));
+  else delete statIcon[Object.keys(statIcon).find(k => statIcon[k] === asset)];
+}
+
 await mkdir(new URL('../public/', import.meta.url), { recursive: true });
-const game = { builtAt: new Date().toISOString(), items: outItems, sets: outSets, breeds: outBreeds, spells: outSpells, passives, runeWeight, transcendance };
+const game = { builtAt: new Date().toISOString(), items: outItems, sets: outSets, breeds: outBreeds, spells: outSpells, passives, runeWeight, transcendance, statIcon };
 await writeFile(new URL('../public/game.json', import.meta.url), JSON.stringify(game));
 console.log(`transcendance ${transcendance.length}, items ${outItems.length}, panoplies ${Object.keys(outSets).length}, classes ${outBreeds.length}, sorts ${Object.keys(outSpells).length}, passifs ${Object.keys(passives).length}`);
