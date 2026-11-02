@@ -6,7 +6,7 @@
 // tangente au point trouvé, ce qui resserre la borne jusqu'à converger.
 import {
   BASE, STAT_POINTS, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
-  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, lineCap, pointSegments,
+  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
 import { classSpells, elementSpells, score, elementScores } from './damage.js';
@@ -20,7 +20,10 @@ export const DEFAULT_CONFIG = {
   fullScroll: true,
   min: { pa: 12, pm: 6 }, // minimums de stats (n'importe quelle clé, + resMoy)
   // exoPct : % dommages (sorts, distance, mêlée) ajoutables par item, toutes lignes confondues
-  fm: { overs: true, exos: true, exoPct: 1, exoPA: true, exoPM: true, exoPO: false },
+  // transcendance : un item reçoit soit over/exo, soit une rune de transcendance (puis plus de FM)
+  fm: { overs: true, exos: true, exoPct: 1, exoPA: true, exoPM: true, exoPO: false, transcendance: true },
+  // 'auto' : compare 100 % critique et sans critique ; 'crit' ; 'noncrit'
+  critMode: 'auto',
   minLevel: 1,
   banned: [],
   forced: [],
@@ -119,7 +122,19 @@ export function prepare(game, cfg) {
     return [el, list.length ? list : generic];
   }));
   const breed = game.breeds.find(b => b.id === cfg.breedId);
-  return { cfg, keys: [...keys], items, sets, refSpells, breed, runeWeight: w };
+
+  // Meilleure rune de transcendance par stat utile
+  const trans = {};
+  if (cfg.fm.transcendance) for (const r of game.transcendance || []) {
+    if (!keys.has(r.k) || r.v <= 0) continue;
+    if (!trans[r.k] || r.v > trans[r.k].v) trans[r.k] = r;
+  }
+  // Critique visé pour que tous les sorts de l'élément qui peuvent critiquer soient à 100 %
+  const critTarget = Math.max(0, ...cfg.elements.map(el => {
+    const cc = refSpells[el].filter(sp => sp.cc > 0).map(sp => sp.cc);
+    return cc.length ? 100 - Math.min(...cc) : 0;
+  }));
+  return { cfg, keys: [...keys], items, sets, refSpells, breed, runeWeight: w, trans, critTarget };
 }
 
 // ---------- Stats d'une solution ----------
@@ -143,13 +158,17 @@ export function solutionStats(problem, sol) {
   for (const [k, v] of Object.entries(sol.points || {})) add(k, v);
   if (problem.cfg.fullScroll) for (const k of [...CARACS, 'vita', 'sagesse']) add(k, SCROLL);
   for (const [k, v] of Object.entries(sol.fm || {})) add(k, v);
+  for (const [k, n] of Object.entries(sol.trans || {})) add(k, n * problem.trans[k].v);
   st.setBonus = sol.setBonuses.length;
   return st;
 }
 
-function ctxOf(problem, passives) {
+function ctxOf(problem, passives, real = false) {
   const { cfg } = problem;
-  return { elements: cfg.elements, attack: cfg.attack, scenario: cfg.scenario, refSpells: problem.refSpells, passives };
+  return {
+    elements: cfg.elements, attack: cfg.attack, scenario: cfg.scenario, refSpells: problem.refSpells, passives,
+    ignoreCrit: !real && problem.mode === 'noncrit',
+  };
 }
 
 // ---------- Modèle LP ----------
@@ -159,6 +178,7 @@ function term(c, v) { const n = num(c); return n === 0 ? '' : ` ${n >= 0 ? '+' :
 
 function buildLP(problem, cuts) {
   const { cfg, keys, items, sets, breed, runeWeight: w } = problem;
+  const transOk = it => FM_SLOTS.has(it.s) && Object.keys(problem.trans).length > 0;
   const rows = [];
   const bounds = [];
   const binaries = [];
@@ -182,6 +202,7 @@ function buildLP(problem, cuts) {
     if (segVars[k]) for (const sv of segVars[k]) r += term(-1, sv.v);
     if (k === 'vita') r += ' - pv';
     for (const it of items) if (it.fmCap[k]) r += ` - e${it.idx}_${k}`;
+    if (problem.trans[k]) r += term(-problem.trans[k].v, `n_${k}`);
     rows.push(`${r} = ${num((BASE[k] || 0) + scroll(k))}`);
     bounds.push(` T_${k} free`);
   }
@@ -226,10 +247,24 @@ function buildLP(problem, cuts) {
       wr += term(w[k], `e${it.idx}_${k}`);
       bounds.push(` 0 <= e${it.idx}_${k} <= ${it.fmCap[k]}`);
     }
-    rows.push(`${wr} - ${FM_ITEM_WEIGHT} x${it.idx} <= 0`);
+    rows.push(`${wr} - ${FM_ITEM_WEIGHT} x${it.idx}${transOk(it) ? ` + ${FM_ITEM_WEIGHT} tr${it.idx}` : ''} <= 0`);
     const pct = ks.filter(k => PCT_KEYS.includes(k));
     if (pct.length > 1) rows.push(` fmpct${it.idx}:${pct.map(k => ` + e${it.idx}_${k}`).join('')} - ${cfg.fm.exoPct} x${it.idx} <= 0`);
   }
+  // Transcendance : tr = item transcendé (exclut over/exo), n_k = nombre de runes de la stat k
+  const transKeys = Object.keys(problem.trans);
+  const trItems = items.filter(transOk);
+  if (transKeys.length && trItems.length) {
+    for (const it of trItems) { rows.push(` trx${it.idx}: tr${it.idx} - x${it.idx} <= 0`); binaries.push(`tr${it.idx}`); }
+    rows.push(` trsum:${transKeys.map(k => ` + n_${k}`).join('')}${trItems.map(it => ` - tr${it.idx}`).join('')} <= 0`);
+    for (const k of transKeys) {
+      // la rune demande un item de niveau suffisant
+      const ok = trItems.filter(it => it.l >= problem.trans[k].l);
+      rows.push(` trlvl_${k}: n_${k}${ok.map(it => ` - tr${it.idx}`).join('')} <= 0`);
+      generals.push(`n_${k}`);
+    }
+  }
+
   // Un seul exo PA, PM, PO sur tout le stuff
   for (const k of SINGLE_EXO) {
     const vars = items.filter(it => it.fmCap[k]).map(it => `e${it.idx}_${k}`);
@@ -238,6 +273,9 @@ function buildLP(problem, cuts) {
     bounds.push(` 0 <= f_${k} <= 1`);
     generals.push(`f_${k}`);
   }
+
+  // Mode critique : tous les sorts de l'élément à 100 % (critique du stuff, hors passifs)
+  if (problem.mode === 'crit' && problem.critTarget > 0) rows.push(` crit100: T_crit >= ${problem.critTarget}`);
 
   // Minimums demandés
   for (const [k, v] of Object.entries(cfg.min)) {
@@ -306,7 +344,10 @@ function readSolution(problem, cols) {
     const e = v(`e${it.idx}_${k}`);
     if (e > 1e-6) fm[k] = (fm[k] || 0) + e;
   }
-  return { items, points, fm };
+  const trans = {};
+  for (const k of Object.keys(problem.trans)) { const n = Math.round(v(`n_${k}`)); if (n > 0) trans[k] = n; }
+  const transItems = new Set(items.filter(it => v(`tr${it.idx}`) > 0.5).map(it => it.id));
+  return { items, points, fm, trans, transItems };
 }
 
 // Coût réel en points d'une répartition (paliers)
@@ -367,7 +408,7 @@ function makeCuts(problem, stats, sol) {
 
 function distributeFM(highs, problem, sol, grad) {
   const { runeWeight: w, cfg } = problem;
-  const fmItems = sol.items.filter(it => FM_SLOTS.has(it.s) && Object.keys(it.fmCap).length);
+  const fmItems = sol.items.filter(it => FM_SLOTS.has(it.s) && Object.keys(it.fmCap).length && !sol.transItems?.has(it.id));
   const keys = Object.keys(sol.fm);
   if (!fmItems.length || !keys.length) return { perItem: {}, fm: {} };
   const rows = [], bounds = [], gens = [];
@@ -379,7 +420,8 @@ function distributeFM(highs, problem, sol, grad) {
       if (!cap) continue;
       const v = `e${it.idx}_${k}`;
       // priorité aux stats sous contrainte, puis gradient des dégâts
-      const prio = (cfg.min[k] !== undefined ? 1000 : 0) + (grad[k] || 0) * 1000 + 1e-3;
+      const constrained = cfg.min[k] !== undefined || (k === 'crit' && problem.mode === 'crit');
+      const prio = (constrained ? 1000 : 0) + (grad[k] || 0) * 1000 + 1e-3;
       obj += term(prio, v);
       wr += term(w[k], v);
       bounds.push(` 0 <= ${v} <= ${cap}`);
@@ -403,13 +445,49 @@ function distributeFM(highs, problem, sol, grad) {
   return { perItem, fm };
 }
 
+// ---------- Attribution des runes de transcendance ----------
+
+// n_k runes par stat sur les items transcendés : les runes de plus haut niveau vont aux items de plus haut niveau
+function assignTranscendance(problem, sol) {
+  const items = sol.items.filter(it => sol.transItems?.has(it.id)).sort((a, b) => b.l - a.l);
+  const runes = Object.entries(sol.trans || {}).flatMap(([k, n]) => Array(n).fill(problem.trans[k]))
+    .sort((a, b) => b.l - a.l);
+  const out = {};
+  runes.forEach((r, i) => { if (items[i] && items[i].l >= r.l) out[items[i].id] = { n: r.n, k: r.k, v: r.v }; });
+  return out;
+}
+
+// ---------- Comparatif des options de forgemagie ----------
+
+// Gain de dégâts de chaque option ajoutée seule au stuff final : % dommages, overs, transcendances.
+// Les overs sont comparés à poids égal (15, le poids d'1 % de dommages).
+function fmComparison(problem, stats, passives) {
+  const ctx = ctxOf(problem, passives, true);
+  const base = score(stats, ctx);
+  const w = problem.runeWeight;
+  const el = problem.cfg.elements[0];
+  const pctKey = problem.cfg.attack === 'melee' ? 'pctMelee' : 'pctDist';
+  const over = k => ({ label: `Over +${Math.floor(15 / w[k])} ${STAT_LABEL[k]} (poids 15)`, add: { [k]: Math.floor(15 / w[k]) } });
+  const opts = [
+    { label: 'Exo +1 % Dommages sorts (poids 15)', add: { pctSorts: 1 } },
+    { label: `Exo +1 ${STAT_LABEL[pctKey]} (poids 15)`, add: { [pctKey]: 1 } },
+    over(ELEMENT_STAT[el]), over('puissance'), over(ELEMENT_DO[el]), over('doCrit'), over('crit'),
+    ...Object.values(problem.trans).map(r => ({ label: `${r.n} : +${r.v} ${STAT_LABEL[r.k]} (transcendance)`, add: { [r.k]: r.v }, trans: true })),
+  ];
+  return opts.map(o => {
+    const st = { ...stats };
+    for (const [k, v] of Object.entries(o.add)) st[k] = (st[k] || 0) + v;
+    const gain = score(st, ctx) - base;
+    return { label: o.label, trans: !!o.trans, gain, pct: base > 0 ? (100 * gain) / base : 0 };
+  }).sort((a, b) => b.gain - a.gain);
+}
+
 // ---------- Boucle principale ----------
 
-export function optimize(highs, game, config, onProgress = () => {}) {
-  const cfg = { ...DEFAULT_CONFIG, ...config, fm: { ...DEFAULT_CONFIG.fm, ...config.fm }, min: { ...(config.min ?? DEFAULT_CONFIG.min) } };
+function solveMode(highs, game, cfg, mode, onProgress) {
   const problem = prepare(game, cfg);
   problem.setsById = game.sets;
-  if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
+  problem.mode = mode;
 
   // Point de départ : tous les points dans les caracs des éléments joués
   const startPoints = {};
@@ -423,7 +501,8 @@ export function optimize(highs, game, config, onProgress = () => {}) {
     const lp = buildLP(problem, cuts);
     const r = highs.solve(lp, { time_limit: 30, mip_rel_gap: 1e-4 });
     if (r.Status !== 'Optimal' && r.Status !== 'Time limit reached') {
-      throw new Error(r.Status === 'Infeasible' ? 'Aucun stuff ne respecte ces minimums.' : `Solveur : ${r.Status}`);
+      const why = mode === 'crit' ? `Impossible d'atteindre ${problem.critTarget} % critique avec ces minimums.` : 'Aucun stuff ne respecte ces minimums.';
+      throw new Error(r.Status === 'Infeasible' ? why : `Solveur : ${r.Status}`);
     }
     upper = Math.min(upper, r.ObjectiveValue);
     cur = readSolution(problem, r.Columns);
@@ -431,19 +510,38 @@ export function optimize(highs, game, config, onProgress = () => {}) {
     const passives = cur.items.filter(it => it.passive).map(it => it.passive);
     const val = score(curStats, ctxOf(problem, passives));
     if (!best || val > best.value) best = { ...cur, value: val };
-    onProgress({ iter: iter + 1, value: best.value, bound: Math.exp(upper), items: problem.items.length });
+    onProgress({ mode, iter: iter + 1, value: best.value, items: problem.items.length });
     if (Math.log(best.value) >= upper - 1e-3) break;
     cuts.push(...makeCuts(problem, curStats, cur));
   }
 
-  // Forgemagie exacte item par item, puis stats finales
+  // Forgemagie exacte item par item, runes de transcendance, puis stats finales
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
   const grad = makeCuts(problem, bestStats, best)[0]?.g || {};
   const { perItem, fm } = distributeFM(highs, problem, best, grad);
+  const transPerItem = assignTranscendance(problem, best);
   const final = { ...best, fm };
   const stats = solutionStats(problem, final);
-  const ctx = ctxOf(problem, passives);
+  const ctx = ctxOf(problem, passives, true);
+  return { problem, final, stats, perItem, transPerItem, passives, realScore: score(stats, ctx), ctx };
+}
+
+export function optimize(highs, game, config, onProgress = () => {}) {
+  const cfg = { ...DEFAULT_CONFIG, ...config, fm: { ...DEFAULT_CONFIG.fm, ...config.fm }, min: { ...(config.min ?? DEFAULT_CONFIG.min) } };
+  if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
+
+  const modes = cfg.critMode === 'auto' ? ['crit', 'noncrit'] : [cfg.critMode];
+  const runs = [];
+  let lastError;
+  for (const mode of modes) {
+    try { runs.push({ mode, ...solveMode(highs, game, cfg, mode, onProgress) }); }
+    catch (e) { lastError = e; }
+  }
+  if (!runs.length) throw lastError;
+  const chosen = runs.reduce((a, b) => (b.realScore > a.realScore ? b : a));
+  const { problem, final, stats, perItem, transPerItem, passives, ctx } = chosen;
+
   const violations = Object.entries(cfg.min)
     .filter(([k, v]) => (k === 'resMoy' ? RES_KEYS.reduce((t, r) => t + (stats[r] || 0), 0) / 5 : stats[k] || 0) < v - 1e-6)
     .map(([k, v]) => ({ key: k, min: v, got: stats[k] }));
@@ -451,14 +549,23 @@ export function optimize(highs, game, config, onProgress = () => {}) {
 
   return {
     config: cfg,
-    items: final.items.map(it => ({ id: it.id, n: it.n, s: it.s, l: it.l, img: it.img, set: it.set, st: it.st, c: it.c, passive: it.p || 0, fm: perItem[it.id] || {} })),
+    items: final.items.map(it => ({
+      id: it.id, n: it.n, s: it.s, l: it.l, img: it.img, set: it.set, st: it.st, c: it.c, passive: it.p || 0,
+      fm: perItem[it.id] || {}, trans: transPerItem[it.id] || null,
+    })),
     points: final.points,
     pointsCost: pointsCost(problem.breed, final.points),
     setBonuses: final.setBonuses,
     stats,
-    score: score(stats, ctx),
+    score: chosen.realScore,
     elementScores: elementScores(stats, ctx),
     ctx: { elements: ctx.elements, attack: ctx.attack, scenario: ctx.scenario, passives },
+    crit: {
+      mode: chosen.mode, target: problem.critTarget,
+      runs: runs.map(r => ({ mode: r.mode, score: r.realScore })),
+      failed: modes.length > runs.length ? lastError?.message : null,
+    },
+    fmComparison: fmComparison(problem, stats, passives),
     violations,
     unmetConditions: unmet,
     candidates: problem.items.length,

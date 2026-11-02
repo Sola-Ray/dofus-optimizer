@@ -14,6 +14,7 @@ const SLOT_LABEL = {
   ceinture: 'Ceinture', bottes: 'Bottes', familier: 'Familier / monture', dofus: 'Dofus / trophée',
 };
 const SLOT_ORDER = Object.keys(SLOT_LABEL);
+const MODE_LABEL = { crit: 'Stuff 100 % critique', noncrit: 'Stuff sans critique' };
 
 // Minimums proposés dans le formulaire (clé, libellé)
 const MIN_FIELDS = [
@@ -68,6 +69,11 @@ function renderConfig() {
         <label title="Moyenne sur un combat de 5 tours"><input type="radio" name="scenario" value="moyen" ${config.scenario === 'moyen' ? 'checked' : ''}>Combat moyen</label>
         <label title="Le meilleur tour pour frapper"><input type="radio" name="scenario" value="burst" ${config.scenario === 'burst' ? 'checked' : ''}>Tour de burst</label>
       </fieldset>
+      <fieldset class="seg seg3"><legend>Critique</legend>
+        <label title="Compare 100 % critique et sans critique, garde le meilleur"><input type="radio" name="critMode" value="auto" ${config.critMode === 'auto' ? 'checked' : ''}>Auto</label>
+        <label title="Vise 100 % critique sur tous les sorts de l'élément"><input type="radio" name="critMode" value="crit" ${config.critMode === 'crit' ? 'checked' : ''}>100 %</label>
+        <label><input type="radio" name="critMode" value="noncrit" ${config.critMode === 'noncrit' ? 'checked' : ''}>Sans</label>
+      </fieldset>
       <label class="check"><input type="checkbox" id="scroll" ${config.fullScroll ? 'checked' : ''}>Full parchemins (+100 partout)</label>
     </section>
     <section>
@@ -83,6 +89,7 @@ function renderConfig() {
       </label>
       <label class="check"><input type="checkbox" data-fm="overs" ${config.fm.overs ? 'checked' : ''}>Overs (pousser une ligne existante)</label>
       <label class="check"><input type="checkbox" data-fm="exos" ${config.fm.exos ? 'checked' : ''}>Exos de stats (ajouter une ligne absente)</label>
+      <label class="check"><input type="checkbox" data-fm="transcendance" ${config.fm.transcendance ? 'checked' : ''}>Runes de transcendance (à la place de l'over/exo sur un item)</label>
       <div class="chips">
         ${['PA', 'PM', 'PO'].map(k => `<label class="chip"><input type="checkbox" data-fm="exo${k}" ${config.fm['exo' + k] ? 'checked' : ''}>Exo ${k}</label>`).join('')}
       </div>
@@ -117,6 +124,7 @@ function bindConfig() {
     else if (t.name === 'el') config.elements = [...root.querySelectorAll('input[name=el]:checked')].map(i => i.value);
     else if (t.name === 'attack') config.attack = t.value;
     else if (t.name === 'scenario') config.scenario = t.value;
+    else if (t.name === 'critMode') config.critMode = t.value;
     else if (t.id === 'scroll') config.fullScroll = t.checked;
     else if (t.id === 'exoPct') config.fm.exoPct = Number(t.value);
     else if (t.dataset.fm) config.fm[t.dataset.fm] = t.checked;
@@ -159,7 +167,7 @@ function run() {
 
 worker.onmessage = ({ data }) => {
   if (data.type === 'progress') {
-    setStatus(`Itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort · ${data.items} items candidats`);
+    setStatus(`${MODE_LABEL[data.mode]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort · ${data.items} items candidats`);
   } else if (data.type === 'result') {
     $('#run').disabled = false;
     lastResult = data.result;
@@ -207,6 +215,7 @@ function renderStuff() {
       ${Object.entries(r.elementScores).map(([el, v]) => `<div class="score el-${el}"><span>${EL_LABEL[el]}</span><strong>${fmt(v)}</strong><small>dégâts moyens par sort (sans cible)</small></div>`).join('')}
       <div class="score"><span>Points de carac.</span><strong>${Object.entries(r.points).map(([k, v]) => `${v} ${STAT_LABEL[k]}`).join(', ') || '—'}</strong><small>${r.pointsCost} / 995 points utilisés</small></div>
     </div>
+    ${critBanner(r)}
     <div class="items">
       ${items.map(it => `
         <article class="item">
@@ -215,6 +224,7 @@ function renderStuff() {
           </header>
           <ul class="lines">${statLines(it.st)}</ul>
           ${Object.keys(it.fm).length ? `<ul class="lines fm"><li class="fm-title">Forgemagie</li>${statLines(it.fm, 'fm')}</ul>` : ''}
+          ${it.trans ? `<ul class="lines fm"><li class="fm-title">Transcendance</li><li class="fm">${esc(it.trans.n)} : +${it.trans.v} ${esc(STAT_LABEL[it.trans.k])}</li></ul>` : ''}
           ${it.c ? `<p class="cond">Condition : ${esc(it.c)}</p>` : ''}
         </article>`).join('')}
     </div>
@@ -223,8 +233,18 @@ function renderStuff() {
     <div class="stat-groups">
       ${groups.map(([title, keys]) => `<div class="stat-group"><h3>${title}</h3><dl>${keys.map(k => `<dt>${STAT_LABEL[k]}</dt><dd>${fmt(s[k] || 0)}</dd>`).join('')}</dl></div>`).join('')}
     </div>
+    <h2>Valeur des options de forgemagie sur ce stuff</h2>
+    <p class="hint">Gain de dégâts si on ajoutait cette seule option au stuff final. Les overs sont comparés à poids égal à 1 % de dommages (15).</p>
+    <table class="compare"><tbody>${r.fmComparison.filter(o => o.gain > 0).map(o => `<tr class="${o.trans ? 'trans' : ''}"><td>${esc(o.label)}</td><td>+${o.pct.toFixed(2)} %</td><td>+${fmt(o.gain)}</td></tr>`).join('')}</tbody></table>
     ${passiveNotes ? `<h2>Passifs pris en compte</h2><ul class="passives">${passiveNotes}</ul>` : ''}
   `;
+}
+
+function critBanner(r) {
+  const c = r.crit;
+  const runs = c.runs.map(x => `${MODE_LABEL[x.mode]} : <strong>${fmt(x.score)}</strong>`).join(' · ');
+  const target = c.mode === 'crit' ? ` (${c.target} % de critique du stuff visés pour que tous les sorts soient à 100 %, actuel ${fmt(r.stats.crit || 0)} %)` : '';
+  return `<p class="banner">Choix du moteur : <strong>${MODE_LABEL[c.mode]}</strong>${target}. ${c.runs.length > 1 ? runs : ''}${c.failed ? ` · ${esc(c.failed)}` : ''}</p>`;
 }
 
 // ---------- Onglet Simulation ----------

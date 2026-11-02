@@ -37,8 +37,8 @@ const SPELL_LINES = {
 };
 const PASSIVE_EFFECT = 1175;
 
-const [effectsRaw, items, sets, breeds, variants, spells, levels] = await Promise.all(
-  ['effects', 'items', 'item-sets', 'breeds', 'spell-variants', 'spells', 'spell-levels'].map(read),
+const [effectsRaw, items, sets, breeds, variants, spells, levels, runes] = await Promise.all(
+  ['effects', 'items', 'item-sets', 'breeds', 'spell-variants', 'spells', 'spell-levels', 'runes'].map(read),
 );
 const effects = new Map(effectsRaw.map(e => [e.id, e]));
 const spellById = new Map(spells.map(s => [s.id, s]));
@@ -150,7 +150,14 @@ for (const e of effectsRaw) {
     runeWeight[key] = Math.round(e.effectPowerRate * 100) / 100;
 }
 
+// Runes de transcendance : une ligne fixe, l'item ne peut plus être forgemagé ensuite.
+// Le niveau de la rune est le niveau minimum de l'item.
+const transcendance = runes.flatMap(r => {
+  const e = (r.possibleEffects || []).map(x => statOf(x.effectId, x.diceNum, x.diceSide)).find(Boolean);
+  return e ? [{ id: r.id, n: fr(r.name), l: r.level, k: e[0], v: e[1] }] : [];
+});
+
 await mkdir(new URL('../public/', import.meta.url), { recursive: true });
-const game = { builtAt: new Date().toISOString(), items: outItems, sets: outSets, breeds: outBreeds, spells: outSpells, passives, runeWeight };
+const game = { builtAt: new Date().toISOString(), items: outItems, sets: outSets, breeds: outBreeds, spells: outSpells, passives, runeWeight, transcendance };
 await writeFile(new URL('../public/game.json', import.meta.url), JSON.stringify(game));
-console.log(`items ${outItems.length}, panoplies ${Object.keys(outSets).length}, classes ${outBreeds.length}, sorts ${Object.keys(outSpells).length}, passifs ${Object.keys(passives).length}`);
+console.log(`transcendance ${transcendance.length}, items ${outItems.length}, panoplies ${Object.keys(outSets).length}, classes ${outBreeds.length}, sorts ${Object.keys(outSpells).length}, passifs ${Object.keys(passives).length}`);

@@ -158,3 +158,11 @@ li.el-terre strong { color: var(--terre); }
 li.el-air strong { color: var(--air); }
 .avg { margin: 12px 0 0; }
 .desc { color: var(--muted); white-space: pre-line; font-size: 12.5px; margin: 12px 0 0; }
+
+.seg3 label { padding: 6px 4px; }
+.seg3 label:not(:first-of-type):not(:last-of-type) { border-left: 0; }
+.banner { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 8px; padding: 10px 14px; margin: 14px 0 0; }
+.compare { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+.compare td { padding: 6px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.compare td:not(:first-child) { text-align: right; white-space: nowrap; }
+.compare tr.trans td:first-child { color: #c9a8ff; }

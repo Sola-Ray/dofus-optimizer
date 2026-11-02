@@ -63,6 +63,7 @@ function expected(sp, el, stats, mult) {
 // on maximise l'élément le plus faible (équilibre en multi-élément).
 export function elementScores(stats, ctx) {
   const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements }, ctx.passives || [], ctx.scenario);
+  if (ctx.ignoreCrit) s.crit = 0; // mode « sans critique » : seul le critique de base des sorts compte
   const mult = multipliers(s, mods, ctx.attack);
   const out = {};
   for (const el of ctx.elements) {

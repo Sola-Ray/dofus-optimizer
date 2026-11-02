@@ -66,6 +66,7 @@ const breeds = await fetchAll('breeds');
 const variants = await fetchAll('spell-variants');
 const itemQuery = EQUIP_TYPES.map(t => `&typeId[$in][]=${t}`).join('');
 const items = await fetchAll('items', itemQuery);
+const runes = await fetchAll('items', '&typeId=211'); // runes de transcendance
 const sets = await fetchAll('item-sets', '&$select[]=id&$select[]=name&$select[]=effects&$select[]=bonusIsSecret');
 
 // Sorts : ceux des classes (variantes) + ceux lancés par les items (passifs des Dofus, légendaires…)
@@ -93,6 +94,7 @@ await Promise.all([
   save('breeds', breeds),
   save('spell-variants', variants.map(({ spells: _s, ...v }) => v)),
   save('items', items),
+  save('runes', runes),
   save('item-sets', sets),
   save('spells', [...spells, ...nestedSpells]),
   save('spell-levels', [...spellLevels, ...nestedLevels]),
