@@ -108,7 +108,13 @@ export function simulateSpell(spell, stats, ctx, target) {
     }
     rows[l.crit ? 'crit' : 'normal'].push(row);
   }
-  const sum = (list, k) => list.filter(r => r.kind !== 'soin').reduce((t, r) => t + r[k], 0);
+  // Plusieurs éléments sur un même sort = en général un seul s'applique (meilleur élément, condition) :
+  // on retient l'élément qui fait le plus de dégâts.
+  const sum = (list, k) => {
+    const byEl = {};
+    for (const r of list) if (r.kind !== 'soin') byEl[r.el] = (byEl[r.el] || 0) + r[k];
+    return Math.max(0, ...Object.values(byEl));
+  };
   const critChance = critRate(spell.cc, s);
   const avgN = (sum(rows.normal, 'min') + sum(rows.normal, 'max')) / 2;
   const avgC = rows.crit.length ? (sum(rows.crit, 'min') + sum(rows.crit, 'max')) / 2 : avgN;

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Optimiseur Dofus</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Optimiseur de stuff <span>Dofus 3</span></h1>
+    <p class="data-info" id="dataInfo">Chargement des données…</p>
+  </header>
+  <main class="layout">
+    <aside class="panel" id="config"></aside>
+    <section class="results">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="stuff" aria-selected="true">Stuff</button>
+        <button role="tab" data-tab="sim" aria-selected="false">Simulation</button>
+      </nav>
+      <div id="status" class="status" aria-live="polite"></div>
+      <div id="tab-stuff" class="tab"><p class="empty">Règle ton perso à gauche puis lance la génération.</p></div>
+      <div id="tab-sim" class="tab" hidden><p class="empty">Génère un stuff pour simuler les sorts.</p></div>
+    </section>
+  </main>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

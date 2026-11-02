@@ -60,6 +60,8 @@ const passiveIds = new Set();
 for (const it of items) {
   const slot = SLOT_OF_TYPE[it.typeId];
   if (!slot || it.level > 200) continue;
+  // objets réservés aux MJ ou à un personnage nommé (PX = droits admin, PN = nom, GM = MJ)
+  if (/\b(PX|PN|GM)[<>=!~]/.test(it.criterions || '')) continue;
   const st = {};
   const roll = {};
   let passive = 0;
