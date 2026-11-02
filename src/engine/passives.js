@@ -42,9 +42,11 @@ export const PASSIVES = {
   18672: { // Argenté Scintillant : +20 % finaux 1 tour sous 20 % PV, 1 fois par combat
     moyen: { finaux: 4 }, burst: {},
   },
-  28516: { // Sylvestre : +8 Puissance par PM utilisé, 2 tours
-    moyen: { puissance: 24 }, burst: { puissance: 48 },
-    note: 'Suppose 3 PM utilisés par tour.',
+  28516: { // Sylvestre : +8 Puissance par PM utilisé, 2 tours (les PM de ce tour et du précédent cumulent)
+    moyen: s => ({ puissance: 8 * (s.pm || 0) }), // la moitié de ses PM utilisés à chaque tour
+    burst: s => ({ puissance: 16 * (s.pm || 0) }), // tous ses PM utilisés ce tour et le précédent
+    note: 'Combat moyen : tu utilises la moitié de tes PM à chaque tour (6 PM = +48 Puissance). '
+      + 'Burst : tous tes PM ce tour et le précédent (6 PM = +96 Puissance). Le soin de 8 % n\'est pas compté.',
   },
   20981: { // Cauchemar : +100 Puissance après des dommages de poussée
     moyen: {}, burst: { puissance: 100 },
