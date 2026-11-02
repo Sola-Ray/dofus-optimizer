@@ -224,6 +224,39 @@ function statLines(st, cls = '', rolls = {}) {
     .map(([k, v]) => `<li class="${cls} ${v < 0 ? 'neg' : 'pos'}">${statIcon(k)}<b>${v > 0 && cls ? '+' : ''}${fmt(v)}</b> ${esc(STAT_LABEL[k])}${rolls[k] ? ` <span class="roll">[${rolls[k][0]} à ${rolls[k][1]}]</span>` : ''}</li>`).join('');
 }
 
+// Conditions lisibles : « CA>299&CS>299 » -> « Agilité > 299 et Force > 299 »
+const COND_LABEL = {
+  CS: 'Force', CI: 'Intelligence', CC: 'Chance', CA: 'Agilité', CV: 'Vitalité', CW: 'Sagesse',
+  CP: 'PA', CM: 'PM', pk: 'Bonus de panoplie', PL: 'Niveau',
+};
+function conditionText(c) {
+  return c.split('|').map(group => group.replace(/[()]/g, '').split('&').map(atom => {
+    const m = /^([A-Za-z]{2})([<>=!~])(.*)$/.exec(atom);
+    return m && COND_LABEL[m[1]] ? `${COND_LABEL[m[1]]} ${m[2]} ${m[3]}` : atom;
+  }).join(' et ')).join(' ou ');
+}
+
+// Fiche complète façon infobulle du jeu
+function itemSheet(it) {
+  const g = game.items.find(i => i.id === it.id) || {};
+  const sec = (title, body) => `<div class="sheet-sec"><h4>${title}</h4>${body}</div>`;
+  const w = g.w;
+  const weapon = w ? sec('Effets de l\'arme', `
+    <p class="wstats">${w.pa} PA · portée ${w.po[0]}–${w.po[1]} · ${w.n ? `${w.n} lancer${w.n > 1 ? 's' : ''} par tour · ` : ''}critique ${w.cc} %${w.cb ? ` (+${w.cb})` : ''}</p>
+    <ul class="lines">${w.lines.map(l => `<li class="pos">${statIcon(ELEMENT_DO_KEY[l.el] || 'do')}<b>${l.min}${l.max > l.min ? ` à ${l.max}` : ''}</b> ${l.k === 'vol' ? 'vol' : l.k === 'soin' ? 'soins' : 'dommages'} ${EL_LABEL[l.el] || l.el}</li>`).join('')}</ul>`) : '';
+  const passive = it.passive && game.passives[it.passive]
+    ? sec('Effet passif', `<p class="passive-text">${esc(game.passives[it.passive].d)}</p>`) : '';
+  const extra = g.x ? `<ul class="lines extra">${g.x.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : '';
+  return `${weapon}
+    ${Object.keys(it.st).length || extra ? sec('Effets', `<ul class="lines">${statLines(it.st, '', it.r || {})}</ul>${extra}`) : ''}
+    ${passive}
+    ${Object.keys(it.fm).length ? sec('Forgemagie', `<ul class="lines fm">${statLines(it.fm, 'fm')}</ul>`) : ''}
+    ${it.trans ? sec(`Transcendance · ${esc(it.trans.n)}`, `<ul class="lines fm">${statLines({ [it.trans.k]: it.trans.v }, 'fm')}<li class="locked">Empêche les futures forgemagies</li></ul>`) : ''}
+    ${it.c ? sec('Conditions', `<p class="cond">${esc(conditionText(it.c))}</p>`) : ''}
+    ${g.d ? `<details class="desc-item"><summary>Description</summary><p>${esc(g.d)}</p></details>` : ''}`;
+}
+const ELEMENT_DO_KEY = { feu: 'doFeu', eau: 'doEau', terre: 'doTerre', air: 'doAir', neutre: 'doNeutre' };
+
 function renderStuff() {
   const r = lastResult;
   const items = [...r.items].sort((a, b) => SLOT_ORDER.indexOf(a.s) - SLOT_ORDER.indexOf(b.s));
@@ -251,10 +284,7 @@ function renderStuff() {
           <header><img src="${ITEM_IMG(it.img)}" alt="" width="48" height="48" loading="lazy">
             <div><small>${SLOT_LABEL[it.s]} · niv. ${it.l}</small><h3>${esc(it.n)}</h3>${it.set ? `<small class="set">${esc(game.sets[it.set]?.n || '')}</small>` : ''}</div>
           </header>
-          <ul class="lines">${statLines(it.st, '', it.r || {})}</ul>
-          ${Object.keys(it.fm).length ? `<ul class="lines fm"><li class="fm-title">Forgemagie</li>${statLines(it.fm, 'fm')}</ul>` : ''}
-          ${it.trans ? `<ul class="lines fm"><li class="fm-title">Transcendance · ${esc(it.trans.n)}</li>${statLines({ [it.trans.k]: it.trans.v }, 'fm')}<li class="locked">Empêche les futures forgemagies</li></ul>` : ''}
-          ${it.c ? `<p class="cond">Condition : ${esc(it.c)}</p>` : ''}
+          ${itemSheet(it)}
         </article>`).join('')}
     </div>
     ${r.setBonuses.length ? `<h2>Bonus de panoplie</h2><div class="sets">${r.setBonuses.map(b => `<div class="setbox"><strong>${esc(b.n)}</strong> (${b.count} items)<ul class="lines">${statLines(b.bonus)}</ul></div>`).join('')}</div>` : ''}

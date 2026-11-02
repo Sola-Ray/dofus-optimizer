@@ -56,6 +56,22 @@ function statOf(effectId, min, max) {
   return [key, sign * Math.abs(v)];
 }
 
+// Effets techniques jamais affichés en jeu (échangeable, lié, attitude, mutations…)
+const HIDDEN_EFFECTS = new Set([10, 812, 981, 982, 983, 984, 3829, 3830, 3831, 3832, 3833, 3834, 3835]);
+
+// Texte d'un effet à partir du modèle du jeu : « #1{{~1~2 à }}#2 dommages Feu », « #1 : +#3 Portée maximale »…
+function effectText(e) {
+  let t = fr(effects.get(e.effectId)?.description);
+  if (!t) return '';
+  const range = e.diceSide > e.diceNum;
+  // #1 d'un bonus de sort = nom du sort
+  const one = /^#1 :/.test(t) ? (fr(spellById.get(e.diceNum)?.name) || `Sort ${e.diceNum}`) : e.diceNum;
+  t = t.replace(/\{\{~1~2([^}]*)\}\}/g, range ? '$1' : '')
+    .replace(/\{\{[^}]*\}\}/g, '')
+    .replace('#1', one).replace('#2', range ? e.diceSide : '').replace('#3', e.value);
+  return t.replace(/\s+/g, ' ').trim();
+}
+
 const outItems = [];
 const passiveIds = new Set();
 for (const it of items) {
@@ -65,20 +81,37 @@ for (const it of items) {
   if (/\b(PX|PN|GM)[<>=!~]/.test(it.criterions || '')) continue;
   const st = {};
   const roll = {};
+  const weaponLines = [];
+  const extra = [];
   let passive = 0;
   for (const e of it.possibleEffects || []) {
     if (e.effectId === PASSIVE_EFFECT) { passive = e.diceNum; continue; }
     const s = statOf(e.effectId, e.diceNum, e.diceSide);
-    if (!s) continue;
-    st[s[0]] = (st[s[0]] || 0) + s[1];
-    if (e.diceSide > e.diceNum) roll[s[0]] = [e.diceNum, e.diceSide];
+    if (s) {
+      st[s[0]] = (st[s[0]] || 0) + s[1];
+      if (e.diceSide > e.diceNum) roll[s[0]] = [e.diceNum, e.diceSide];
+      continue;
+    }
+    // Effets hors stats : jets de l'arme, bonus de sorts des items de classe, « Arme de chasse »…
+    const line = SPELL_LINES[e.effectId];
+    if (slot === 'arme' && line) {
+      weaponLines.push({ k: line[0], el: line[1], min: e.diceNum, max: Math.max(e.diceNum, e.diceSide) });
+    } else if (e.visibleInTooltip !== false && !HIDDEN_EFFECTS.has(e.effectId)) {
+      const text = effectText(e);
+      if (text) extra.push(text);
+    }
   }
   if (!Object.keys(st).length && !passive) continue;
   if (passive) passiveIds.add(passive);
+  const weapon = slot === 'arme' && it.apCost ? {
+    pa: it.apCost, po: [it.minRange, it.range], cc: it.criticalHitProbability, cb: it.criticalHitBonus,
+    n: it.maxCastPerTurn, lines: weaponLines,
+  } : undefined;
   outItems.push({
     id: it.id, n: fr(it.name), t: it.typeId, s: slot, l: it.level,
     set: it.itemSetId > 0 ? it.itemSetId : 0, c: it.criterions || '',
     st, r: roll, p: passive || undefined, img: it.iconId,
+    w: weapon, x: extra.length ? extra : undefined, d: fr(it.description).trim() || undefined,
   });
 }
 
