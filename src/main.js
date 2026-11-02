@@ -35,6 +35,9 @@ function loadConfig() {
     const saved = JSON.parse(localStorage.getItem(STORE));
     if (saved) {
       const fm = Object.fromEntries(Object.keys(DEFAULT_CONFIG.fm).map(k => [k, saved.fm?.[k] ?? DEFAULT_CONFIG.fm[k]]));
+      // anciennes versions : 0 voulait dire « interdit »
+      if (!fm.pctExo) Object.assign(fm, { pctExo: 1, pctExoOn: false });
+      if (!fm.overBudget) Object.assign(fm, { overBudget: 20, overOn: false });
       return { ...DEFAULT_CONFIG, ...saved, fm };
     }
   } catch { /* stockage indisponible */ }
@@ -87,14 +90,16 @@ function renderConfig() {
     </section>
     <section>
       <h2>Forgemagie</h2>
-      <p class="hint">Une seule finition par item, comme en vrai : le moteur choisit item par item parmi celles que tu autorises.</p>
+      <p class="hint">Une seule finition par item, comme en vrai. Le moteur choisit item par item la finition qui rapporte le plus parmi celles cochées, ou aucune.</p>
       <label class="check"><input type="checkbox" data-fm="transcendance" ${config.fm.transcendance ? 'checked' : ''}>Runes de transcendance</label>
-      <label class="field">Exo % dommages (sorts, distance, mêlée)
-        <select id="pctExo">${[[0, 'interdit'], [1, '1 %'], [2, '2 %'], [3, '3 %'], [4, '4 %']].map(([v, l]) => `<option value="${v}" ${v === config.fm.pctExo ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      </label>
-      <label class="field">Over / exo de stat sur une ligne
-        <select id="overBudget">${[[0, 'interdit'], [10, 'poids 10'], [20, 'poids 20'], [30, 'poids 30'], [50, 'poids 50']].map(([v, l]) => `<option value="${v}" ${v === config.fm.overBudget ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      </label>
+      <div class="opt">
+        <label class="check"><input type="checkbox" data-fm="pctExoOn" ${config.fm.pctExoOn ? 'checked' : ''}>Exo % dommages, jusqu'à</label>
+        <select id="pctExo" aria-label="Exo % dommages maximum">${[1, 2, 3, 4].map(v => `<option value="${v}" ${v === config.fm.pctExo ? 'selected' : ''}>${v} %</option>`).join('')}</select>
+      </div>
+      <div class="opt">
+        <label class="check"><input type="checkbox" data-fm="overOn" ${config.fm.overOn ? 'checked' : ''}>Over / exo de stat, jusqu'à</label>
+        <select id="overBudget" aria-label="Poids maximum de l'over">${[10, 20, 30, 50].map(v => `<option value="${v}" ${v === config.fm.overBudget ? 'selected' : ''}>poids ${v}</option>`).join('')}</select>
+      </div>
       <div class="chips">
         ${['PA', 'PM', 'PO'].map(k => `<label class="chip"><input type="checkbox" data-fm="exo${k}" ${config.fm['exo' + k] ? 'checked' : ''}>Exo ${k}</label>`).join('')}
       </div>

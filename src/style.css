@@ -177,3 +177,7 @@ li.el-air strong { color: var(--air); }
 .lines .locked { color: #a98bff; font-size: 11.5px; }
 .sicon { width: 18px; height: 18px; flex: none; display: inline-block; object-fit: contain; }
 .stat-group dt { display: flex; align-items: center; gap: 6px; }
+
+.opt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.opt .check { margin: 6px 0; }
+.opt select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }

@@ -23,7 +23,8 @@ export const DEFAULT_CONFIG = {
   //   pctExo : exo % dommages (sorts, distance, mêlée), 0 = interdit
   //   overBudget : poids max d'un over (ou exo léger de stat) sur une ligne, 0 = interdit
   //   transcendance : runes de transcendance (verrouillent l'item)
-  fm: { pctExo: 1, overBudget: 20, exoPA: true, exoPM: true, exoPO: false, transcendance: true },
+  //   pctExoOn / overOn : finition autorisée ou non (pctExo / overBudget = valeur max)
+  fm: { pctExoOn: true, pctExo: 1, overOn: true, overBudget: 20, exoPA: true, exoPM: true, exoPO: false, transcendance: true },
   rollQuality: 1, // 1 = jets parfaits, 0.95, 0.85…
   // 'auto' : compare 100 % critique et sans critique ; 'crit' ; 'noncrit'
   critMode: 'auto',
@@ -577,6 +578,9 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
 // solver.solve(lp, options) -> Promise du résultat HiGHS ; les modes tournent en parallèle
 export async function optimize(solver, game, config, onProgress = () => {}) {
   const cfg = { ...DEFAULT_CONFIG, ...config, fm: { ...DEFAULT_CONFIG.fm, ...config.fm }, min: { ...(config.min ?? DEFAULT_CONFIG.min) } };
+  // une finition décochée = valeur max à 0 (le moteur ne la propose pas)
+  if (!cfg.fm.pctExoOn) cfg.fm.pctExo = 0;
+  if (!cfg.fm.overOn) cfg.fm.overBudget = 0;
   if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
 
   const modes = cfg.critMode === 'auto' ? ['crit', 'noncrit'] : [cfg.critMode];
