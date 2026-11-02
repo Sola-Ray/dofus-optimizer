@@ -192,3 +192,10 @@ li.el-air strong { color: var(--air); }
 .desc-item { margin-top: 8px; font-size: 12px; color: var(--muted); }
 .desc-item summary { cursor: pointer; }
 .desc-item p { margin: 6px 0 0; font-style: italic; }
+
+/* Bouton de génération avec barre de progression */
+.primary.running, .primary.running:disabled {
+  opacity: 1; cursor: progress; color: #1b1608;
+  background: linear-gradient(90deg, var(--gold) var(--pct, 0%), #5a4a24 var(--pct, 0%));
+  transition: background .2s linear;
+}

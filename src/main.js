@@ -173,17 +173,66 @@ function bindConfig() {
 
 // ---------- Génération ----------
 
+// ---------- Progression sur le bouton ----------
+// Le nombre d'itérations n'est pas connu d'avance : chaque mode avance par étapes (phase 1 sur les
+// meilleurs items, phase 2 sur tous les items, finitions), et la barre glisse doucement entre deux
+// étapes sans jamais dépasser la suivante, pour ne pas paraître figée.
+const progress = { modes: {}, count: 1, shown: 0, timer: null };
+function modeFraction(p) {
+  if (p.phase === 3) return 0.95;
+  const [start, span] = p.phase === 1 ? [0.03, 0.42] : [0.45, 0.45];
+  return start + span * (1 - 0.5 ** p.iter);
+}
+function progressTarget() {
+  const fr = Object.values(progress.modes).map(modeFraction);
+  return (fr.reduce((a, b) => a + b, 0) + (progress.count - fr.length) * 0.02) / progress.count;
+}
+function paintButton() {
+  const pct = Math.floor(progress.shown * 100);
+  const btn = $('#run');
+  btn.textContent = `Calcul en cours… ${pct} %`;
+  btn.style.setProperty('--pct', `${pct}%`);
+}
+function startProgress(modeCount) {
+  Object.assign(progress, { modes: {}, count: modeCount, shown: 0 });
+  $('#run').classList.add('running');
+  paintButton();
+  clearInterval(progress.timer);
+  progress.timer = setInterval(() => {
+    const cap = Math.min(progressTarget() + 0.12, 0.97);
+    progress.shown = Math.max(progress.shown, progress.shown + (cap - progress.shown) * 0.015);
+    paintButton();
+  }, 200);
+}
+function stopProgress() {
+  clearInterval(progress.timer);
+  const btn = $('#run');
+  btn.classList.remove('running');
+  btn.style.removeProperty('--pct');
+  btn.textContent = 'Générer le meilleur stuff';
+}
+
 function run() {
   if (!config.elements.length) { setStatus('Choisis au moins un élément.', 'error'); return; }
   $('#run').disabled = true;
   setStatus('Préparation du modèle…');
+  startProgress(config.critMode === 'auto' ? 2 : 1);
   worker.postMessage({ type: 'run', config });
 }
 
 worker.onmessage = ({ data }) => {
   if (data.type === 'progress') {
-    setStatus(`${MODE_LABEL[data.mode]} · ${data.phase === 1 ? 'meilleurs items' : 'tous les items'} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
+    progress.modes[data.mode] = data;
+    progress.shown = Math.max(progress.shown, progressTarget());
+    paintButton();
+    if (data.value === undefined) return;
+    setStatus(`${MODE_LABEL[data.mode]} · ${['', 'meilleurs items', 'tous les items', 'finitions'][data.phase]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
   } else if (data.type === 'result') {
+    // termine visiblement à 100 % avant de rendre la main
+    clearInterval(progress.timer);
+    progress.shown = 1;
+    paintButton();
+    setTimeout(stopProgress, 600);
     $('#run').disabled = false;
     lastResult = data.result;
     selectedSpell = null;
@@ -193,6 +242,7 @@ worker.onmessage = ({ data }) => {
     renderStuff();
     renderSim();
   } else if (data.type === 'error') {
+    stopProgress();
     $('#run').disabled = false;
     setStatus(data.message, 'error');
   }

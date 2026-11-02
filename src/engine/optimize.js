@@ -611,6 +611,7 @@ async function kelley(solver, problem, cuts, start, onProgress, phase) {
   const session = await solver.open(buildLP(problem, cuts));
   try {
     if (start) await session.warmStart(start);
+    onProgress({ mode: problem.mode, phase, iter: 0, items: problem.items.length });
     let best = null, upper = Infinity;
     for (let iter = 0; iter < problem.cfg.maxIterations; iter++) {
       const r = await session.run({ time_limit: 60, mip_rel_gap: 1e-4 });
@@ -677,6 +678,7 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   }
 
   // Forgemagie exacte item par item, runes de transcendance, puis stats finales
+  onProgress({ mode, phase: 3, iter: 0, value: best.value, items: problem.items.length });
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
   const grad = makeCuts(problem, bestStats, best)[0]?.g || {};
