@@ -682,11 +682,64 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
   const grad = makeCuts(problem, bestStats, best)[0]?.g || {};
-  const { perItem, transPerItem, fm } = await finishItems(solver, problem, best, grad);
+  const finish = await finishItems(solver, problem, best, grad);
+  const ctx = ctxOf(problem, passives, true);
+  const { perItem, transPerItem, fm } = improveFinishes(problem, best, finish, ctx);
   const final = { ...best, fm, trans: {} };
   const stats = solutionStats(problem, final);
-  const ctx = ctxOf(problem, passives, true);
   return { problem, final, stats, perItem, transPerItem, passives, realScore: score(stats, ctx), ctx };
+}
+
+// Les finitions sont choisies avec une pente figée, ce qui met toute la même ligne partout
+// (24 % sorts / 6 % distance alors que les deux se multiplient). On améliore item par item en
+// recalculant les vrais dégâts : autre ligne de %, autre transcendance… tant que ça rapporte plus
+// et que les minimums (et le critique visé) restent tenus.
+function improveFinishes(problem, best, finish, ctx) {
+  const { cfg } = problem;
+  const perItem = structuredClone(finish.perItem);
+  const transPerItem = structuredClone(finish.transPerItem);
+  const totals = () => {
+    const fm = {};
+    for (const f of Object.values(perItem)) for (const [k, v] of Object.entries(f)) fm[k] = (fm[k] || 0) + v;
+    for (const t of Object.values(transPerItem)) fm[t.k] = (fm[t.k] || 0) + t.v;
+    return fm;
+  };
+  const mins = { ...cfg.min };
+  if (problem.mode === 'crit' && problem.critTarget > 0) mins.crit = Math.max(mins.crit || 0, problem.critTarget);
+  const ok = st => Object.entries(mins).every(([k, v]) => (k === 'resMoy'
+    ? RES_KEYS.reduce((t, r) => t + (st[r] || 0), 0) / 5 : st[k] || 0) >= v - 1e-6);
+  const evaluate = () => {
+    const st = solutionStats(problem, { ...best, fm: totals(), trans: {} });
+    return ok(st) ? score(st, ctx) : -Infinity;
+  };
+
+  let current = evaluate();
+  for (let pass = 0; pass < 6; pass++) {
+    let improved = false;
+    for (const it of best.items.filter(i => FM_SLOTS.has(i.s))) {
+      const fm = perItem[it.id] || {};
+      // on ne touche qu'aux items avec une seule finition « légère » (exo %, transcendance ou rien)
+      if (Object.keys(fm).some(k => it.fmKind[k] !== 'pct')) continue;
+      const options = [{ fm: {}, tr: null }];
+      for (const [k, cap] of Object.entries(it.fmCap)) if (it.fmKind[k] === 'pct') options.push({ fm: { [k]: cap }, tr: null });
+      for (const r of Object.values(problem.trans)) if (it.l >= r.l) options.push({ fm: {}, tr: { n: r.n, k: r.k, v: r.v } });
+      const saved = { fm: perItem[it.id], tr: transPerItem[it.id] };
+      let bestOpt = null;
+      for (const o of options) {
+        perItem[it.id] = o.fm; transPerItem[it.id] = o.tr;
+        if (!o.tr) delete transPerItem[it.id];
+        const v = evaluate();
+        if (v > current + 1e-6) { current = v; bestOpt = o; }
+      }
+      const keep = bestOpt || saved;
+      perItem[it.id] = keep.fm || {};
+      if (keep.tr) transPerItem[it.id] = keep.tr; else delete transPerItem[it.id];
+      if (bestOpt) improved = true;
+    }
+    if (!improved) break;
+  }
+  for (const id of Object.keys(perItem)) if (!Object.keys(perItem[id]).length) delete perItem[id];
+  return { perItem, transPerItem, fm: totals() };
 }
 
 // Pourquoi chaque exo PA / PM / PO coché est utilisé ou non. Un exo coché n'est jamais imposé :
