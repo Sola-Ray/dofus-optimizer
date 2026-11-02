@@ -13,7 +13,7 @@ const solver = {
 };
 const t0 = Date.now();
 const res = await optimize(solver, game, { breedId: 7, elements: ['feu'], min: { pa: 12, pm: 6 }, critMode: process.argv[2] || 'auto', ...JSON.parse(process.argv[3] || '{}') },
-  p => console.log(`[${p.mode} phase ${p.phase}] iter ${p.iter} score ${p.value.toFixed(1)} (${p.items} candidats) ${((Date.now() - t0) / 1000).toFixed(1)} s`));
+  p => p.value !== undefined && console.log(`[${p.mode} phase ${p.phase}] iter ${p.iter} score ${p.value.toFixed(1)} (${p.items} candidats) ${((Date.now() - t0) / 1000).toFixed(1)} s`));
 console.log(`${((Date.now() - t0) / 1000).toFixed(1)} s`);
 console.log('critique', JSON.stringify(res.crit));
 for (const it of res.items) {
