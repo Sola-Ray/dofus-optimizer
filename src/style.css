@@ -131,6 +131,13 @@ legend { color: var(--muted); font-size: 12px; margin-bottom: 6px; padding: 0; }
 
 .target { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
 .target summary { cursor: pointer; color: var(--gold); font-weight: 600; }
+.turn { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-variant-numeric: tabular-nums; }
+.turn p { margin: 0; }
+.turn strong { font-size: 17px; }
+.turn .turn-seq { color: var(--muted); margin-top: 4px; }
+.turn summary { cursor: pointer; color: var(--gold); margin-top: 8px; }
+.turn ol { margin: 6px 0 0; padding-left: 22px; }
+.turn ol strong { font-size: inherit; }
 .sim { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 700px) { .sim { grid-template-columns: 1fr; } }
 .spell-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; max-height: 70vh; overflow: auto; }
@@ -237,3 +244,19 @@ button.chip:hover { border-color: var(--gold); }
 .saved small { color: var(--muted); font-size: 11px; }
 .saved .ghost { flex: none; padding: 6px 12px; }
 .ghost.danger:hover { border-color: var(--err); color: var(--err); }
+
+/* Équipe */
+.team-pick { list-style: none; padding: 0; margin: 8px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0 12px; }
+.team-order { padding-left: 22px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.team-order li { display: flex; align-items: center; gap: 8px; }
+.team-order li span { flex: 1; min-width: 0; }
+.team-order small { color: var(--muted); font-size: 11px; }
+.team-order .ghost { flex: none; padding: 2px 10px; }
+.team-run { align-items: flex-end; margin: 14px 0; }
+.team-run .field { margin: 0; flex: none; }
+.team-run .primary { margin: 0; flex: 1; }
+.team-plan { padding-left: 22px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.team-plan small { display: block; color: var(--muted); font-size: 12px; }
+.team-table td small { color: var(--muted); font-size: 11px; }
+.team-skipped { margin-top: 14px; font-size: 12px; color: var(--muted); }
+.team-skipped summary { cursor: pointer; }

@@ -1,6 +1,8 @@
 import { DEFAULT_CONFIG, AUTO_ELEMENTS } from './engine/optimize.js';
 import { DEFAULT_LEVELING, suggestTiers } from './engine/leveling.js';
+import { teamPlan, initiativeOf } from './engine/team.js';
 import { simulateSpell, classSpells } from './engine/damage.js';
+import { turnDamage, equippedWeapon } from './engine/rotation.js';
 import { PASSIVES } from './engine/passives.js';
 import { STAT_LABEL, ELEMENTS } from './engine/rules.js';
 
@@ -449,6 +451,7 @@ function bindSaveBar() {
     delete lastResult.draftName;
     setStatus(`Fiche « ${name} » sauvegardée.`, 'ok');
     renderSaved();
+    renderTeam();
   };
 }
 
@@ -477,6 +480,7 @@ function renderSaved() {
     if (!x || !confirm(`Supprimer la fiche « ${x.name} » ?`)) return;
     writeSaved(loadSaved().filter(s => s.id !== x.id));
     renderSaved();
+    renderTeam();
   });
 }
 
@@ -586,6 +590,8 @@ function renderSim() {
   if (!selectedSpell || !sims.has(selectedSpell)) selectedSpell = spells.filter(offensive).sort((a, b) => sims.get(b.id).average - sims.get(a.id).average)[0]?.id;
   const sel = spells.find(s => s.id === selectedSpell);
   const res = sel && sims.get(sel.id);
+  const turn = turnDamage(spells, r.stats, ctx, { target, weapon: equippedWeapon(game, r.items) });
+  const seq = t => t.casts.map(c => `${c.count > 1 ? `${c.count} × ` : ''}${esc(c.n)}`).join(', ') || 'aucun sort';
   const line = row => `<li class="el-${row.el}">${row.kind === 'soin' ? 'Soin' : row.kind === 'vol' ? 'Vol de vie' : 'Dommages'} ${EL_LABEL[row.el] || ''} : <strong>${fmt(row.min)}${row.max !== row.min ? ' – ' + fmt(row.max) : ''}</strong></li>`;
   $('#tab-sim').innerHTML = `
     <details class="target" open>
@@ -596,6 +602,15 @@ function renderSim() {
       <div class="grid5">${ELEMENTS.map(el => tField('res' + EL_LABEL[el], '% Rés. ' + EL_LABEL[el])).join('')}</div>
       <div class="grid5">${ELEMENTS.map(el => tField('rf' + EL_LABEL[el], 'Rés. fixe ' + EL_LABEL[el])).join('')}</div>
     </details>
+    <section class="turn">
+      <p>Dégâts par tour (${turn.pa} PA) : moyen <strong>${fmt(turn.average.dmg)}</strong> sur un combat de ${turn.average.turns.length} tours · meilleur tour <strong>${fmt(turn.best.dmg)}</strong>${turn.average.dmg > 0 && target.pv > 0 ? ` · ${Math.ceil(target.pv / turn.average.dmg)} tours pour tuer` : ''}</p>
+      <p class="turn-seq">Meilleur tour : ${seq(turn.best)}</p>
+      <details>
+        <summary>Tour par tour</summary>
+        <ol>${turn.average.turns.map(t => `<li><strong>${fmt(t.dmg)}</strong> · ${seq(t)}</li>`).join('')}</ol>
+        <p class="desc">Une cible, limites de lancer et relances du jeu respectées. Seuls les dommages directs des sorts ${ctx.elements.map(el => EL_LABEL[el]).join(' / ')} et de l'arme sont comptés.</p>
+      </details>
+    </section>
     <div class="sim">
       <ul class="spell-list" role="listbox" aria-label="Sorts">
         ${breed.variants.filter(pair => pair.some(id => known.has(id))).map(pair => `<li class="pair">${pair.map(id => known.get(id)).filter(Boolean).map(sp => {
@@ -631,6 +646,78 @@ function renderSim() {
 
 // ---------- Onglets ----------
 
+// ---------- Onglet Équipe ----------
+// 2 à 4 fiches sauvegardées (stuffs simples), dans l'ordre de jeu (initiative), et le plan de buffs
+
+let teamIds = [];
+let teamTurns = 4;
+let teamResult = null;
+
+function renderTeam() {
+  const saved = loadSaved().filter(x => !x.result.tiers);
+  teamIds = teamIds.filter(id => saved.some(x => x.id === id));
+  const byId = new Map(saved.map(x => [x.id, x]));
+  const order = teamIds.map(id => byId.get(id));
+  const fx = e => Object.entries(e.effects).map(([k, v]) => `${v > 0 ? '+' : ''}${fmt(v)} ${STAT_LABEL[k] || k}${e.per === 'pm' ? ' par PM utilisé' : ''}`).join(', ');
+  const T = teamResult;
+  $('#tab-team').innerHTML = saved.length < 2
+    ? '<p class="empty">Sauvegarde au moins deux stuffs (bouton « Sauvegarder » au-dessus d\'un stuff généré) pour composer une équipe.</p>'
+    : `
+    <p class="hint">Choisis 2 à 4 fiches. L'ordre de jeu suit l'initiative (à ajuster si besoin) : un buff lancé par un perso qui joue après sa cible ne lui sert qu'au tour suivant.</p>
+    <ul class="team-pick">${saved.map(x => `<li><label class="check"><input type="checkbox" data-teampick="${x.id}" ${teamIds.includes(x.id) ? 'checked' : ''} ${!teamIds.includes(x.id) && teamIds.length >= 4 ? 'disabled' : ''}>${esc(x.name)}</label></li>`).join('')}</ul>
+    ${order.length ? `<h2>Ordre de jeu</h2><ol class="team-order">${order.map((x, i) => `<li><span>${esc(x.name)}</span><small>initiative ${fmt(initiativeOf(x.result.stats))}</small>
+      <button type="button" class="ghost" data-teamup="${i}" ${i ? '' : 'disabled'} aria-label="Faire jouer ${esc(x.name)} plus tôt">↑</button>
+      <button type="button" class="ghost" data-teamdown="${i}" ${i < order.length - 1 ? '' : 'disabled'} aria-label="Faire jouer ${esc(x.name)} plus tard">↓</button></li>`).join('')}</ol>` : ''}
+    <div class="row team-run">
+      <label class="field small">Tours simulés<select id="teamTurns">${[3, 4, 5, 6].map(n => `<option value="${n}" ${n === teamTurns ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <button type="button" class="primary" id="teamRun" ${order.length >= 2 ? '' : 'disabled'}>Calculer les buffs</button>
+    </div>
+    ${T ? `
+      <div class="score-row">
+        <div class="score"><span>Équipe sans buffs</span><strong>${fmt(T.base)}</strong><small>dégâts sur ${T.turns} tours</small></div>
+        <div class="score"><span>Avec les buffs</span><strong>${fmt(T.total)}</strong><small>+${(100 * (T.total / T.base - 1)).toFixed(1)} %</small></div>
+      </div>
+      <h2>Qui buffer, et quand</h2>
+      ${T.plan.length ? `<ol class="team-plan">${T.plan.map(a => `<li><b>Tour ${a.turn}</b> · ${esc(T.members[a.caster].name)} lance <strong>${esc(a.n)}</strong> (${a.pa} PA)${a.target === null ? '' : ` sur ${esc(T.members[a.target].name)}`}
+        <small>${a.effects.map(fx).join(' ; ')} · +${fmt(a.gain)} dégâts d'équipe</small></li>`).join('')}</ol>` : '<p class="empty">Aucun buff ne rapporte plus que les dégâts que son lanceur ferait à la place.</p>'}
+      <h2>Dégâts par tour</h2>
+      <table class="compare team-table"><thead><tr><th></th>${Array.from({ length: T.turns }, (_, i) => `<th>Tour ${i + 1}</th>`).join('')}</tr></thead><tbody>
+        ${T.members.map(m => `<tr><td>${esc(m.name)}</td>${m.final.map((v, i) => `<td>${fmt(v)}<small> (${v >= m.base[i] ? '+' : ''}${fmt(v - m.base[i])})</small></td>`).join('')}</tr>`).join('')}
+      </tbody></table>
+      ${T.members.some(m => m.skipped.length || m.ignored.length) ? `<details class="team-skipped"><summary>Buffs non comptés</summary><ul>${T.members.flatMap(m => [
+        ...m.skipped.map(x => `<li>${esc(m.name)} · ${esc(x.n)} : ${esc(x.why)}</li>`),
+        ...m.ignored.map(x => `<li>${esc(m.name)} · ${esc(x.n)} : ${esc(x.reason)}</li>`),
+      ]).join('')}</ul></details>` : ''}
+      <p class="hint">Hypothèses : équipe groupée (les buffs de zone touchent tout le monde), une seule cible, durées décomptées au début du tour du lanceur, cumul partagé des Encouragements d'Eniripsa non modélisé. Chaque buff retenu rapporte plus que les dégâts que son lanceur aurait faits avec ces PA.</p>
+    ` : ''}`;
+  const root = $('#tab-team');
+  const changed = () => { teamResult = null; renderTeam(); };
+  root.querySelectorAll('[data-teampick]').forEach(c => c.onchange = () => {
+    const id = Number(c.dataset.teampick);
+    if (c.checked) {
+      teamIds.push(id);
+      // ordre par défaut : initiative décroissante
+      teamIds.sort((a, b) => initiativeOf(byId.get(b).result.stats) - initiativeOf(byId.get(a).result.stats));
+    } else teamIds = teamIds.filter(x => x !== id);
+    changed();
+  });
+  root.querySelectorAll('[data-teamup]').forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.teamup);
+    [teamIds[i - 1], teamIds[i]] = [teamIds[i], teamIds[i - 1]];
+    changed();
+  });
+  root.querySelectorAll('[data-teamdown]').forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.teamdown);
+    [teamIds[i + 1], teamIds[i]] = [teamIds[i], teamIds[i + 1]];
+    changed();
+  });
+  if ($('#teamTurns')) $('#teamTurns').onchange = e => { teamTurns = Number(e.target.value); changed(); };
+  if ($('#teamRun')) $('#teamRun').onclick = () => {
+    teamResult = teamPlan(game, order.map(x => ({ name: x.name, result: x.result })), { turns: teamTurns });
+    renderTeam();
+  };
+}
+
 function showTab(name) {
   document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
   document.querySelectorAll('.tab').forEach(t => { t.hidden = t.id !== `tab-${name}`; });
@@ -644,3 +731,4 @@ worker.postMessage({ type: 'game', game });
 $('#dataInfo').textContent = `${game.items.length} items · ${Object.keys(game.sets).length} panoplies · données DofusDB du ${new Date(game.builtAt).toLocaleDateString('fr-FR')}`;
 renderConfig();
 renderSaved();
+renderTeam();

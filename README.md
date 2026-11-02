@@ -21,6 +21,23 @@ Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`, et `node t
 
 Un stuff généré (ou un plan de leveling) se sauvegarde sous un nom modifiable, proposé par défaut à partir du mode, de la classe, du niveau et de l'élément (« Stuff Eniripsa niv. 200 Feu »). L'onglet Sauvegardes liste les fiches pour les rouvrir ou les supprimer. Elles sont gardées dans le navigateur (localStorage) : elles ne passent pas d'un navigateur ou d'un appareil à l'autre.
 
+## Dégâts par tour
+
+L'onglet Simulation donne aussi les dégâts **par tour** : la meilleure suite de sorts avec les PA du stuff, en respectant les lancers par tour, par cible et les relances (limites lues dans les données du jeu). Deux chiffres : le meilleur tour (tous les sorts disponibles) et le tour moyen sur un combat de 5 tours (relances comprises). L'arme compte avec son % dommages armes et son critique.
+
+## Équipe
+
+L'onglet Équipe assemble 2 à 4 fiches sauvegardées et dit **qui buffer, avec quoi et à quel tour** pour maximiser les dégâts de toute l'équipe :
+
+- **Catalogue des buffs** (`src/engine/buffs.js`) : buffs d'alliés (PA, Puissance, Dommages, % dommages…) et malus d'ennemis (résistances, dommages subis), lus dans les données du jeu, plus une liste codée à la main pour ce qui passe par un état ou un sous-sort. Ce qui n'est pas compté est affiché avec la raison. Aucun catalogue de buffs à jour n'existe en ligne : tout vient des données DofusDB.
+- **Ordre de jeu** : par initiative, modifiable. La durée d'un buff se décompte au début du tour de son lanceur : un allié qui joue avant le lanceur n'en profite qu'au tour suivant.
+- **Coût** : buffer coûte des PA, donc les dégâts que le lanceur aurait faits. Un buff n'est retenu que s'il rapporte plus à l'équipe. Les buffs non cumulables (la plupart) ne s'additionnent pas en les relançant.
+- **Hypothèses** : équipe groupée (les buffs de zone touchent tout le monde), une seule cible, stuffs figés. Recherche gloutonne : chaque buff retenu est rentable, mais l'optimum n'est pas prouvé.
+
+## Lignes de dégâts des sorts
+
+Les données répètent souvent une ligne de dégâts : variante en zone (Vacarme sur un Feu Follet), variante selon l'état du lanceur (Pandawa Sobre / Saoul), ligne réservée aux invocations ou à une cible sous un état (Flèche Dévorante). Le moteur ne garde que ce qui frappe un ennemi ordinaire lors d'un lancer direct ; une même ligne dans la même zone reste un vrai second coup (Dagues Boomerang). Les poisons comptent pour un déclenchement. Torrent Arcanique est codé à la main : 3 combinaisons élémentaires supposées avant le lancer (+2 dommages de base chacune).
+
 ## Mode leveling
 
 Un stuff par palier de niveau (par défaut 50, 80, 110, 150 et 200, avec des PA / PM minimums propres à chaque palier). Les niveaux d'obtention des sorts de l'élément sont proposés comme paliers. Les paliers sont optimisés **ensemble** : changer un item coûte une pénalité, réglée par « changer un item seulement s'il rapporte au moins X % de dégâts » (3 % par défaut). Le moteur garde donc les panoplies qui restent bonnes plusieurs paliers au lieu de tout racheter, comme les stuffs de leveling des guides. Chaque palier affiche les items gardés et nouveaux, et ses dégâts comparés au meilleur stuff possible à ce niveau sans rien garder.
