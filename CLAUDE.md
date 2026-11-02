@@ -20,6 +20,7 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 
 - Les **malus de panoplie** sont stockés déjà négatifs (`from: -40`) alors que ceux des items sont positifs : `statOf` prend la valeur absolue avant d'appliquer le signe.
 - Les **passifs** (Dofus, prysmaradites, légendaires) sont l'effet `1175` ; l'id du sort est dans `diceNum`. Leur texte officiel est dans le sort, leur effet chiffré est codé à la main dans `src/engine/passives.js`.
+- Pour savoir quand un passif se déclenche, lire les effets du sort dans `spell-levels` : `triggers` (`TB` = début de tour, `TE` = fin de tour, `D` = dommages subis, `CC` = coup critique…) et `delay`. Vulbis et Ocre ont `TB` avec `delay: 1` : rien au tour 1.
 - Objets de MJ à exclure : conditions `PX`, `PN`, `GM`.
 - Runes de transcendance : `typeId` 211 ; le niveau de la rune est le niveau minimum de l'item.
 - Les sorts ont plusieurs grades (`minPlayerLevel`) : `grades` dans `game.json`, choisis selon le niveau du perso.
