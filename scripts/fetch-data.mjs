@@ -8,7 +8,7 @@ const PAGE = 50; // plafond imposé par l'API
 const PASSIVE_EFFECT = 1175; // effet « sort passif » des Dofus, prysmaradites et légendaires
 
 // Types d'items équipables (voir /item-types)
-export const EQUIP_TYPES = [
+const EQUIP_TYPES = [
   1, 9, 10, 11, 16, 17, // amulette, anneau, ceinture, bottes, chapeau, cape
   2, 3, 4, 5, 6, 7, 8, 19, 22, 271, // armes
   82, // bouclier

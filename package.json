@@ -1,0 +1,17 @@
+{
+  "name": "dofus-optimizer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "data": "node scripts/fetch-data.mjs && node scripts/build-data.mjs",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "highs": "^1.15.4"
+  }
+}
