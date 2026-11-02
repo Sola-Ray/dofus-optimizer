@@ -114,6 +114,7 @@ function renderConfig() {
     <section>
       <h2>Items</h2>
       <label class="field small">Niveau minimum des items<input type="number" id="minLevel" min="1" max="200" value="${config.minLevel}"></label>
+      <label class="check"><input type="checkbox" id="gelano" ${config.gelanoPaPm ? 'checked' : ''}>Imposer un Gelano PA PM (exo PM)</label>
       <label class="field">Ajouter un item
         <input id="itemSearch" list="itemList" placeholder="Nom d'un item…" autocomplete="off">
         <datalist id="itemList">${game.items.map(i => `<option value="${esc(i.n)}">`).join('')}</datalist>
@@ -142,6 +143,7 @@ function bindConfig() {
     else if (t.name === 'scenario') config.scenario = t.value;
     else if (t.name === 'critMode') config.critMode = t.value;
     else if (t.id === 'scroll') config.fullScroll = t.checked;
+    else if (t.id === 'gelano') config.gelanoPaPm = t.checked;
     else if (t.id === 'pctExo') config.fm.pctExo = Number(t.value);
     else if (t.id === 'overBudget') config.fm.overBudget = Number(t.value);
     else if (t.id === 'rollQuality') config.rollQuality = Number(t.value);

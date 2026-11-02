@@ -32,8 +32,12 @@ export const DEFAULT_CONFIG = {
   minLevel: 1,
   banned: [],
   forced: [],
+  gelanoPaPm: false, // impose le Gelano (1 PA) exo PM
   maxIterations: 14,
 };
+
+// Gelano : anneau niveau 60 à 1 PA, imposé avec un exo PM quand gelanoPaPm est coché
+const GELANO = 2469;
 
 const RES_KEYS = Object.values(ELEMENT_RES);
 const PCT_KEYS = ['pctSorts', 'pctDist', 'pctMelee'];
@@ -94,6 +98,8 @@ export function prepare(game, cfg) {
         else { cap = Math.min(lineCap(w[k], nat) - nat, Math.floor(cfg.fm.overBudget / w[k])); kind = 'over'; }
         if (cap > 0) { fmCap[k] = cap; fmKind[k] = kind; }
       }
+      // l'exo PM du Gelano PA PM est imposé, même si l'exo PM n'est pas coché
+      if (cfg.gelanoPaPm && it.id === GELANO) { fmCap.pm = 1; fmKind.pm = 'heavy'; }
     }
     return { ...it, st, crit, fmCap, fmKind, passive: it.p && passiveMatters(it.p) ? it.p : 0 };
   });
@@ -239,6 +245,8 @@ function buildLP(problem, cuts) {
   if (prys.length > 1) rows.push(` prysma:${prys.map(i => ` + x${i}`).join('')} <= 1`);
   for (const it of items) binaries.push(`x${it.idx}`);
   for (const id of cfg.forced) { const it = items.find(i => i.id === id); if (it) rows.push(` force_${it.idx}: x${it.idx} = 1`); }
+  const gelano = cfg.gelanoPaPm && items.find(i => i.id === GELANO);
+  if (gelano) rows.push(` gelano: e${gelano.idx}_pm = 1`);
 
   // Panoplies
   for (const s of sets) {
@@ -492,6 +500,8 @@ async function finishItems(solver, problem, sol, grad) {
       if (overW && cut > 0) rows.push(` hv${it.idx}_${k}:${overW} + ${cut} ${h} <= ${cfg.fm.overBudget}`);
     }
   }
+  const gelano = cfg.gelanoPaPm && items.find(it => it.id === GELANO);
+  if (gelano) rows.push(` gelano: h${gelano.idx}_pm = 1`);
   for (const [k, vs] of Object.entries(heavy)) rows.push(` heavy_${k}:${vs.map(v => ` + ${v}`).join('')} <= 1`);
 
   const mins = { ...cfg.min };
@@ -751,9 +761,10 @@ function improveFinishes(problem, best, finish, ctx) {
 // le moteur ne le pose que s'il sert un minimum demandé ; sinon une autre finition rapporte plus.
 function exoNotes(cfg, stats, perItem) {
   const notes = [];
+  if (cfg.gelanoPaPm) notes.push({ k: 'pm', used: true, text: 'Exo PM utilisé : imposé sur le Gelano PA PM.' });
   for (const k of SINGLE_EXO) {
     const K = k.toUpperCase();
-    if (!cfg.fm[`exo${K}`]) continue;
+    if (!cfg.fm[`exo${K}`] || (k === 'pm' && cfg.gelanoPaPm)) continue;
     const used = Object.values(perItem).some(f => f[k]);
     const min = cfg.min[k];
     const have = Math.round(stats[k] || 0);
@@ -778,6 +789,12 @@ export async function optimize(solver, game, config, onProgress = () => {}) {
   if (!cfg.fm.pctExoOn) cfg.fm.pctExo = 0;
   if (!cfg.fm.overOn) cfg.fm.overBudget = 0;
   if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
+  if (cfg.gelanoPaPm) {
+    const lvl = game.items.find(it => it.id === GELANO)?.l ?? 60;
+    if (cfg.level < lvl) throw new Error(`Le Gelano demande le niveau ${lvl}.`);
+    cfg.forced = [...new Set([...cfg.forced, GELANO])];
+    cfg.banned = cfg.banned.filter(id => id !== GELANO);
+  }
 
   const modes = cfg.critMode === 'auto' ? ['crit', 'noncrit'] : [cfg.critMode];
   let lastError;
