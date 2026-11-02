@@ -88,19 +88,19 @@ function renderConfig() {
     <section>
       <h2>Forgemagie</h2>
       <p class="hint">Une seule finition par item, comme en vrai : le moteur choisit item par item parmi celles que tu autorises.</p>
-      <label class="check"><input type="checkbox" data-fm="transcendance" ${config.fm.transcendance ? 'checked' : ''}>Runes de transcendance (Ta Do Per So, Pata Do Cri, Pata Cri…)</label>
+      <label class="check"><input type="checkbox" data-fm="transcendance" ${config.fm.transcendance ? 'checked' : ''}>Runes de transcendance</label>
       <label class="field">Exo % dommages (sorts, distance, mêlée)
-        <select id="pctExo">${[[0, 'interdit'], [1, '1 %'], [2, '2 % (environ 1 chance sur 1 000)'], [3, '3 % (exceptionnel)'], [4, '4 % (quelques items par an)']].map(([v, l]) => `<option value="${v}" ${v === config.fm.pctExo ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="pctExo">${[[0, 'interdit'], [1, '1 %'], [2, '2 %'], [3, '3 %'], [4, '4 %']].map(([v, l]) => `<option value="${v}" ${v === config.fm.pctExo ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </label>
       <label class="field">Over / exo de stat sur une ligne
-        <select id="overBudget">${[[0, 'interdit'], [10, 'petit (poids 10 : +10 carac, +1 crit…)'], [20, 'moyen (poids 20)'], [30, 'gros (poids 30)'], [50, 'énorme (poids 50)']].map(([v, l]) => `<option value="${v}" ${v === config.fm.overBudget ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="overBudget">${[[0, 'interdit'], [10, 'poids 10'], [20, 'poids 20'], [30, 'poids 30'], [50, 'poids 50']].map(([v, l]) => `<option value="${v}" ${v === config.fm.overBudget ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </label>
       <div class="chips">
         ${['PA', 'PM', 'PO'].map(k => `<label class="chip"><input type="checkbox" data-fm="exo${k}" ${config.fm['exo' + k] ? 'checked' : ''}>Exo ${k}</label>`).join('')}
       </div>
       <p class="hint">Un seul exo PA, PM et PO compte sur l'ensemble du stuff. Une transcendance verrouille l'item.</p>
       <label class="field">Qualité des jets des items
-        <select id="rollQuality">${[[1, 'parfaits'], [0.95, 'quasi parfaits (95 %)'], [0.85, 'corrects (85 %)']].map(([v, l]) => `<option value="${v}" ${v === config.rollQuality ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="rollQuality">${[[1, '100 %'], [0.95, '95 %'], [0.85, '85 %']].map(([v, l]) => `<option value="${v}" ${v === config.rollQuality ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </label>
     </section>
     <section>
