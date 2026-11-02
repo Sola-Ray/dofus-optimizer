@@ -64,6 +64,9 @@ function renderConfig() {
       <label class="field">Classe
         <select id="breed">${breeds.map(b => `<option value="${b.id}" ${b.id === config.breedId ? 'selected' : ''}>${esc(b.n)}</option>`).join('')}</select>
       </label>
+      <label class="field small">Niveau du personnage
+        <input type="number" id="level" min="1" max="200" value="${config.level}">
+      </label>
       <fieldset class="chips"><legend>Éléments joués</legend>
         ${ELEMENTS.map(el => `<label class="chip el-${el}"><input type="checkbox" name="el" value="${el}" ${config.elements.includes(el) ? 'checked' : ''}>${EL_LABEL[el]}</label>`).join('')}
       </fieldset>
@@ -146,6 +149,9 @@ function bindConfig() {
     else if (t.dataset.min) {
       if (t.value === '') delete config.min[t.dataset.min];
       else config.min[t.dataset.min] = Number(t.value);
+    } else if (t.id === 'level') {
+      config.level = Math.min(200, Math.max(1, Number(t.value) || 200));
+      t.value = config.level;
     } else if (t.id === 'minLevel') config.minLevel = Math.max(1, Number(t.value) || 1);
     saveConfig();
   });
@@ -325,7 +331,7 @@ function renderStuff() {
   $('#tab-stuff').innerHTML = `
     <div class="score-row">
       ${Object.entries(r.elementScores).map(([el, v]) => `<div class="score el-${el}"><span>${EL_LABEL[el]}</span><strong>${fmt(v)}</strong><small>dégâts moyens par sort (sans cible)</small></div>`).join('')}
-      <div class="score"><span>Points de carac.</span><strong>${Object.entries(r.points).map(([k, v]) => `${v} ${STAT_LABEL[k]}`).join(', ') || '—'}</strong><small>${r.pointsCost} / 995 points utilisés</small></div>
+      <div class="score"><span>Points de carac.</span><strong>${Object.entries(r.points).map(([k, v]) => `${v} ${STAT_LABEL[k]}`).join(', ') || '—'}</strong><small>${r.pointsCost} / ${r.pointsMax} points utilisés</small></div>
     </div>
     ${critBanner(r)}
     ${(r.exoNotes || []).length ? `<ul class="exo-notes">${r.exoNotes.map(n => `<li class="${n.used ? 'used' : 'skip'}">${esc(n.text)}</li>`).join('')}</ul>` : ''}
@@ -364,7 +370,8 @@ function renderSim() {
   const r = lastResult;
   const breed = game.breeds.find(b => b.id === r.config.breedId);
   const ctx = { ...r.ctx, refSpells: {} };
-  const spells = classSpells(game, breed.id);
+  const spells = classSpells(game, breed.id, r.config.level);
+  const known = new Map(spells.map(sp => [sp.id, sp]));
   const sims = new Map(spells.map(sp => [sp.id, simulateSpell(sp, r.stats, ctx, target)]));
   const offensive = sp => sp.lines.some(l => l.k !== 'soin');
   const tField = (k, l) => `<label class="field small">${l}<input type="number" data-target="${k}" value="${target[k] ?? 0}"></label>`;
@@ -383,7 +390,7 @@ function renderSim() {
     </details>
     <div class="sim">
       <ul class="spell-list" role="listbox" aria-label="Sorts">
-        ${breed.variants.map(pair => `<li class="pair">${pair.map(id => game.spells[id]).filter(Boolean).map(sp => {
+        ${breed.variants.filter(pair => pair.some(id => known.has(id))).map(pair => `<li class="pair">${pair.map(id => known.get(id)).filter(Boolean).map(sp => {
           const sm = sims.get(sp.id);
           return `<button type="button" role="option" aria-selected="${sp.id === selectedSpell}" data-spell="${sp.id}" class="spell ${offensive(sp) ? '' : 'utility'}">
             <img src="${SPELL_IMG(sp.img)}" alt="" width="36" height="36" loading="lazy">

@@ -5,7 +5,7 @@
 // logarithme des dégâts. Le log des dégâts est (presque) concave : chaque itération ajoute une
 // tangente au point trouvé, ce qui resserre la borne jusqu'à converger.
 import {
-  BASE, STAT_POINTS, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
+  baseStats, statPoints, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
   FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
@@ -14,6 +14,7 @@ import { PASSIVES } from './passives.js';
 
 export const DEFAULT_CONFIG = {
   breedId: 7,
+  level: 200, // niveau du personnage : filtre les items, les sorts, les points de carac
   elements: ['feu'],
   attack: 'dist', // 'dist' | 'melee'
   scenario: 'moyen', // 'moyen' | 'burst'
@@ -74,7 +75,8 @@ export function prepare(game, cfg) {
   const usefulSet = new Set(Object.entries(game.sets)
     .filter(([, s]) => s.b.some(b => Object.keys(b).some(k => keys.has(k)))).map(([id]) => Number(id)));
 
-  let items = game.items.filter(it => !banned.has(it.id) && (forced.has(it.id) || it.l >= cfg.minLevel || it.s === 'dofus'));
+  let items = game.items.filter(it => !banned.has(it.id) && it.l <= cfg.level
+    && (forced.has(it.id) || it.l >= cfg.minLevel || it.s === 'dofus'));
   items = items.map(it => {
     const crit = parseCriteria(it.c);
     // Qualité des jets : 1 = jets parfaits, sinon min + q × (max − min)
@@ -130,7 +132,7 @@ export function prepare(game, cfg) {
     sets.push({ id: Number(id), n: s.n, items: idxs, bonus, maxK: idxs.length });
   }
 
-  const spells = classSpells(game, cfg.breedId);
+  const spells = classSpells(game, cfg.breedId, cfg.level);
   // sans sort de l'élément dans la classe, on prend un sort générique
   const generic = [{ id: 0, n: 25, c: 30, cc: 10, nLines: 1 }];
   const refSpells = Object.fromEntries(cfg.elements.map(el => {
@@ -150,13 +152,16 @@ export function prepare(game, cfg) {
     const cc = refSpells[el].filter(sp => sp.cc > 0).map(sp => sp.cc);
     return cc.length ? 100 - Math.min(...cc) : 0;
   }));
-  return { cfg, keys: [...keys], items, sets, refSpells, breed, runeWeight: w, trans, critTarget };
+  return {
+    cfg, keys: [...keys], items, sets, refSpells, breed, runeWeight: w, trans, critTarget,
+    base: baseStats(cfg.level), points: statPoints(cfg.level),
+  };
 }
 
 // ---------- Stats d'une solution ----------
 
 export function solutionStats(problem, sol) {
-  const st = { ...BASE };
+  const st = { ...problem.base };
   const add = (k, v) => { st[k] = (st[k] || 0) + v; };
   const counts = {};
   for (const it of sol.items) {
@@ -219,7 +224,7 @@ function buildLP(problem, cuts) {
     if (k === 'vita') r += ' - pv';
     for (const it of items) if (it.fmCap[k]) r += ` - e${it.idx}_${k}`;
     if (problem.trans[k]) r += term(-problem.trans[k].v, `n_${k}`);
-    rows.push(`${r} = ${num((BASE[k] || 0) + scroll(k))}`);
+    rows.push(`${r} = ${num((problem.base[k] || 0) + scroll(k))}`);
     bounds.push(` T_${k} free`);
   }
 
@@ -250,7 +255,7 @@ function buildLP(problem, cuts) {
     bounds.push(sv.width === Infinity ? ` ${sv.v} >= 0` : ` 0 <= ${sv.v} <= ${sv.width}`);
   }
   pts += ' + pv';
-  rows.push(`${pts} <= ${STAT_POINTS}`);
+  rows.push(`${pts} <= ${problem.points}`);
   for (const c of CARACS) for (const sv of segVars[c]) generals.push(sv.v);
   generals.push('pv');
 
@@ -795,6 +800,7 @@ export async function optimize(solver, game, config, onProgress = () => {}) {
     })),
     points: final.points,
     pointsCost: pointsCost(problem.breed, final.points),
+    pointsMax: problem.points,
     setBonuses: final.setBonuses,
     stats,
     score: chosen.realScore,

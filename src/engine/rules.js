@@ -2,10 +2,13 @@
 
 export const LEVEL = 200;
 export const STAT_POINTS = 995; // 5 points par niveau
+export const statPoints = level => 5 * (Math.min(level, LEVEL) - 1);
 export const SCROLL = 100; // parchemins : +100 par caractéristique
 
 // Stats de base d'un personnage niveau 200, avant équipement
 export const BASE = { pa: 7, pm: 3, invo: 1, vita: 50 + 5 * (LEVEL - 1), pods: 1000, crit: 0 };
+// 6 PA de base, +1 au niveau 100
+export const baseStats = level => ({ ...BASE, pa: level >= 100 ? 7 : 6, vita: 50 + 5 * (Math.min(level, LEVEL) - 1) });
 
 export const ELEMENTS = ['feu', 'eau', 'terre', 'air', 'neutre'];
 export const ELEMENT_STAT = { feu: 'intel', eau: 'chance', terre: 'force', air: 'agi', neutre: 'force' };

@@ -6,9 +6,15 @@
 import { ELEMENTS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES, ELEMENT_RF } from './rules.js';
 import { passiveEffect } from './passives.js';
 
-export function classSpells(game, breedId) {
+// Sort au niveau du personnage : grade le plus haut déjà débloqué, null si pas encore appris
+export function spellAtLevel(spell, level = 200) {
+  const grade = (spell.grades || [spell]).filter(g => g.lvl <= level).pop();
+  return grade ? { ...spell, ...grade } : null;
+}
+
+export function classSpells(game, breedId, level = 200) {
   const breed = game.breeds.find(b => b.id === breedId);
-  return breed.variants.flat().map(id => game.spells[id]).filter(Boolean);
+  return breed.variants.flat().map(id => game.spells[id] && spellAtLevel(game.spells[id], level)).filter(Boolean);
 }
 
 const hits = (line, el) => (line.k === 'dmg' || line.k === 'vol') && (line.el === el || line.el === 'best');

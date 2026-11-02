@@ -144,11 +144,12 @@ function spellInfo(id) {
     const min = e.diceNum, max = Math.max(e.diceNum, e.diceSide);
     return [{ k: m[0], el: m[1], min, max, crit, tm: e.targetMask || '' }];
   });
-  return {
-    id, n: fr(s.name), d: fr(s.description), img: s.iconId,
-    pa: l.apCost, cc: l.criticalHitProbability, po: [l.minRange, l.range], lvl: l.minPlayerLevel,
-    lines: [...lines(l.effects || [], false), ...lines(l.criticalEffect || [], true)],
-  };
+  const grade = g => ({
+    pa: g.apCost, cc: g.criticalHitProbability, po: [g.minRange, g.range], lvl: g.minPlayerLevel,
+    lines: [...lines(g.effects || [], false), ...lines(g.criticalEffect || [], true)],
+  });
+  // grades = progression du sort selon le niveau du personnage (le dernier est celui du niveau 200)
+  return { id, n: fr(s.name), d: fr(s.description), img: s.iconId, ...grade(l), grades: lv.map(grade) };
 }
 
 const outSpells = {};
