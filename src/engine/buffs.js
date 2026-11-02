@@ -288,11 +288,18 @@ export const HAND = {
     replaceAuto: true,
     ignored: [{ effect: '25% Dommages finaux', reason: 'pour les Feux Follets du lanceur seulement (description du sort), pas pour les alliés' }],
   }),
-  25802: () => ({ // Mot Alchimique : caracs données par la fiole, conditionnelles
+  // Mot Alchimique : potion de la Fiole. Lu dans les sous-sorts (téléchargés à part, pas dans game.json) :
+  // la Fiole (2 PA) est remplie d'un élément par l'Alchi-Rhétorique d'un Mot de l'Eniripsa lancé sur elle
+  // (Mot Tapageur, 3 PA) ; quand un allié l'attaque (Potion Alchimique, déclencheur « dommages subis »,
+  // cible O = l'attaquant), il boit la potion de l'élément (Potion Craquelée / Embrasée / Givrée /
+  // Éventée) : +100 dans la caractéristique (Fiole rang 1, +150 au rang 2) pendant 3 tours, qu'il se
+  // lance lui-même. On compte le rang 1, un remplissage, et la Fiole remplie dans l'élément de l'allié.
+  25802: sp => ({
     replaceAuto: true,
-    ignored: [{
-      effect: '+100 / +150 dans une caractéristique, 3 tours',
-      reason: 'passe par la Fiole : un allié doit l\'attaquer après qu\'elle a été remplie par l\'Alchi-Rhétorique, et la valeur dépend d\'un état (100 ou 150). Qui reçoit le bonus (l\'attaquant ou le lanceur) n\'est pas clair dans les sous-sorts : non compté.',
+    buffs: [{
+      target: 'ally', selfToo: true, effects: { carac: 100 }, duration: 3, pa: (sp.pa || 2) + 3, lim: { ...sp.lim, st: 1 },
+      viaTarget: true, targetPa: 'cheapest',
+      note: 'Fiole remplie par Mot Tapageur (3 PA de plus pour l\'Eniripsa) puis attaquée par l\'allié (un de ses sorts les moins chers) : +100 dans la caractéristique de son élément pendant 3 de ses tours (+150 si la Fiole est remplie deux fois).',
     }],
   }),
   // --- Enutrof ---

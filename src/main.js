@@ -658,7 +658,7 @@ function renderTeam() {
   teamIds = teamIds.filter(id => saved.some(x => x.id === id));
   const byId = new Map(saved.map(x => [x.id, x]));
   const order = teamIds.map(id => byId.get(id));
-  const fx = e => Object.entries(e.effects).map(([k, v]) => `${v > 0 ? '+' : ''}${fmt(v)} ${STAT_LABEL[k] || k}${e.per === 'pm' ? ' par PM utilisé' : ''}`).join(', ');
+  const fx = e => Object.entries(e.effects).map(([k, v]) => `${v > 0 ? '+' : ''}${fmt(v)} ${k === 'carac' ? 'dans la caractéristique de son élément' : STAT_LABEL[k] || k}${e.per === 'pm' ? ' par PM utilisé' : ''}`).join(', ');
   const T = teamResult;
   $('#tab-team').innerHTML = saved.length < 2
     ? '<p class="empty">Sauvegarde au moins deux stuffs (bouton « Sauvegarder » au-dessus d\'un stuff généré) pour composer une équipe.</p>'

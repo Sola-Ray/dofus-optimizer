@@ -17,12 +17,15 @@
 //     (Précipitation au dernier tour ne paierait jamais ses -3 PA) ;
 //   - recherche gloutonne : on ajoute le lancer qui rapporte le plus de dégâts d'équipe, tant que ça
 //     rapporte. Ce n'est pas un optimum prouvé, mais chaque lancer retenu est rentable.
+//   - buff « bu » par la cible (viaTarget, potion de la Fiole d'Eniripsa) : il commence au tour de la
+//     cible, qui paie une attaque (son sort de dégâts le moins cher, targetPa) ; « carac » = la
+//     caractéristique de son élément ;
 // Hors modèle : buffs à condition (posture, placement), buffs avec un malus pour des alliés, effets de
 // durée 0 (dans les ignorés du catalogue), cumul partagé des Encouragements d'Eniripsa, placement.
 import { classSpells } from './damage.js';
 import { turnDamage, equippedWeapon } from './rotation.js';
 import { classBuffs, activeTurns, thenTurns } from './buffs.js';
-import { CARACS } from './rules.js';
+import { CARACS, ELEMENT_STAT } from './rules.js';
 
 const ENEMY = new Set(['enemy', 'enemies']);
 
@@ -47,9 +50,12 @@ function member(game, m) {
     if (!c) casts.push(c = { spellId: b.spellId, n: b.n, pa: b.pa, lim: b.lim || {}, lines: [] });
     c.lines.push(b);
   }
+  const spells = classSpells(game, breedId, level);
+  const weapon = equippedWeapon(game, r.items);
+  const options = turnDamage(spells, r.stats, r.ctx, { weapon }).options;
   return {
-    name: m.name, breedId, level, stats: r.stats, ctx: r.ctx, spells: classSpells(game, breedId, level),
-    weapon: equippedWeapon(game, r.items), casts, skipped, ignored: cat.ignored,
+    name: m.name, breedId, level, stats: r.stats, ctx: r.ctx, spells, weapon, casts, skipped, ignored: cat.ignored,
+    mainStat: ELEMENT_STAT[r.ctx.elements[0]], cheapestPa: Math.min(...options.map(o => o.pa)),
   };
 }
 
@@ -96,9 +102,17 @@ export function teamPlan(game, members, { turns = 4 } = {}) {
         for (const j of who) {
           const into = ENEMY.has(line.target) ? foe : add;
           const scale = line.per === 'pm' ? Math.max(0, team[j].stats.pm || 0) : 1;
-          for (const r of activeTurns(line, a.caster, j, turns, a.turn)) {
+          // bu par la cible : à son tour (le suivant si elle joue avant le lanceur), compté comme lancé par elle
+          let on;
+          if (line.viaTarget) {
+            const t = j >= a.caster ? a.turn : a.turn + 1;
+            if (t > turns) continue;
+            if (line.targetPa === 'cheapest') spent[j][t] += team[j].cheapestPa;
+            on = activeTurns(line, j, j, turns, t);
+          } else on = activeTurns(line, a.caster, j, turns, a.turn);
+          for (const r of on) {
             if (!room(j, r, a, li)) continue;
-            for (const [k, v] of Object.entries(line.effects)) put(into[j][r], k, v * scale);
+            for (const [k, v] of Object.entries(line.effects)) put(into[j][r], k === 'carac' ? team[j].mainStat : k, v * scale);
           }
           for (const r of thenTurns(line, a.caster, j, turns, a.turn)) for (const [k, v] of Object.entries(line.then.effects)) put(into[j][r], k, v);
         }
