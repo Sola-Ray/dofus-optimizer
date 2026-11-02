@@ -31,6 +31,7 @@ L'onglet Équipe assemble 2 à 4 fiches sauvegardées et dit **qui buffer, avec 
 
 - **Catalogue des buffs** (`src/engine/buffs.js`) : buffs d'alliés (PA, Puissance, Dommages, % dommages…) et malus d'ennemis (résistances, dommages subis), lus dans les données du jeu, plus une liste codée à la main pour ce qui passe par un état ou un sous-sort. Ce qui n'est pas compté est affiché avec la raison. Aucun catalogue de buffs à jour n'existe en ligne : tout vient des données DofusDB.
 - **Ordre de jeu** : par initiative, modifiable. La durée d'un buff se décompte au début du tour de son lanceur : un allié qui joue avant le lanceur n'en profite qu'au tour suivant.
+- **Eniripsa** : un Encouragement (Stimulant, Galvanisant, Vivifiant) lancé sur une Fiole la fait éclater et touche les alliés autour, pour 2 PA de plus (mécanique absente des données, codée à la main). Un allié ne garde qu'un Encouragement à la fois : le dernier lancé remplace les autres (lu dans les sous-sorts). La potion d'une Fiole remplie (+100 dans une caractéristique pour l'allié qui l'attaque) est aussi comptée.
 - **Coût** : buffer coûte des PA, donc les dégâts que le lanceur aurait faits. Un buff n'est retenu que s'il rapporte plus à l'équipe. Les buffs non cumulables (la plupart) ne s'additionnent pas en les relançant.
 - **Hypothèses** : équipe groupée (les buffs de zone touchent tout le monde), une seule cible, stuffs figés. Recherche gloutonne : chaque buff retenu est rentable, mais l'optimum n'est pas prouvé.
 

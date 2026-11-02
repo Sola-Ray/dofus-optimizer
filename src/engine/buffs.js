@@ -264,6 +264,13 @@ function readSpell(sp) {
 // replaceAuto : les buffs lus automatiquement pour ce sort sont faux ou incomplets, on les remplace.
 const fxOf = (sp, e, tm) => (sp.fx || []).find(f => !f.crit && f.e === e && (tm === undefined || f.tm === tm));
 const val = f => f ? (f.min + f.max) / 2 : 0;
+const FIOLE_PA = 2; // Mot Alchimique
+const fioleVariant = (sp, effects) => ({
+  buffs: [{
+    target: 'allies', selfToo: true, effects, duration: 2, pa: (sp.pa || 2) + FIOLE_PA, variant: 'Fiole',
+    note: `Lancé sur une Fiole (Mot Alchimique, ${FIOLE_PA} PA de plus) : la Fiole éclate et l'Encouragement touche les alliés autour (mécanique hors données, zone supposée couvrir l'équipe groupée).`,
+  }],
+});
 
 export const HAND = {
   // --- Iop ---
@@ -284,6 +291,13 @@ export const HAND = {
     }],
   }),
   // --- Eniripsa ---
+  // Encouragements lancés sur une Fiole (Mot Alchimique, 2 PA) : la Fiole éclate et l'Encouragement
+  // touche les alliés autour d'elle. Mécanique décrite par un joueur, absente des données (géré par le
+  // script du sort, comme Vacarme) : la taille de la zone n'est pas connue, l'équipe est supposée
+  // groupée autour de la Fiole. Même sort, donc mêmes limites de lancer que la version sur un allié.
+  25742: sp => fioleVariant(sp, { pa: val(fxOf(sp, 111)) }),
+  25745: sp => fioleVariant(sp, { puissance: val(fxOf(sp, 138)) }),
+  25744: sp => fioleVariant(sp, { pm: val(fxOf(sp, 128)) }),
   25856: () => ({ // Vacarme : les +25 % finaux ne vont qu'aux Feux Follets du lanceur
     replaceAuto: true,
     ignored: [{ effect: '25% Dommages finaux', reason: 'pour les Feux Follets du lanceur seulement (description du sort), pas pour les alliés' }],

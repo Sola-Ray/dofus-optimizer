@@ -20,14 +20,18 @@
 //   - buff « bu » par la cible (viaTarget, potion de la Fiole d'Eniripsa) : il commence au tour de la
 //     cible, qui paie une attaque (son sort de dégâts le moins cher, targetPa) ; « carac » = la
 //     caractéristique de son élément ;
+//   - Encouragements d'Eniripsa : un seul à la fois par allié, le dernier lancé remplace les autres ;
 // Hors modèle : buffs à condition (posture, placement), buffs avec un malus pour des alliés, effets de
-// durée 0 (dans les ignorés du catalogue), cumul partagé des Encouragements d'Eniripsa, placement.
+// durée 0 (dans les ignorés du catalogue), placement.
 import { classSpells } from './damage.js';
 import { turnDamage, equippedWeapon } from './rotation.js';
 import { classBuffs, activeTurns, thenTurns } from './buffs.js';
 import { CARACS, ELEMENT_STAT } from './rules.js';
 
 const ENEMY = new Set(['enemy', 'enemies']);
+// Encouragements d'Eniripsa (Stimulant, Jouvence, Vivifiant, Galvanisant) : chacun retire d'abord les
+// effets des autres (effets 406 de leurs sous-sorts 25761 à 25764) ; un allié n'en garde qu'un, le dernier
+const ENCOURAGEMENT = new Set([25742, 25743, 25744, 25745]);
 
 // Initiative d'un perso : somme des caractéristiques + bonus d'initiative (PV pleins)
 export const initiativeOf = stats => (stats.ini || 0) + CARACS.reduce((t, c) => t + (stats[c] || 0), 0);
@@ -46,8 +50,10 @@ function member(game, m) {
   // un lancer = toutes les lignes de buff d'un même sort
   const casts = [];
   for (const b of usable) {
-    let c = casts.find(x => x.spellId === b.spellId);
-    if (!c) casts.push(c = { spellId: b.spellId, n: b.n, pa: b.pa, lim: b.lim || {}, lines: [] });
+    // une variante (Encouragement lancé sur une Fiole) est un lancer à part, mais du même sort :
+    // elle partage ses limites de lancer et son cumul (comparaison par spellId)
+    let c = casts.find(x => x.spellId === b.spellId && x.variant === b.variant);
+    if (!c) casts.push(c = { spellId: b.spellId, variant: b.variant, n: b.variant ? `${b.n} sur une ${b.variant}` : b.n, pa: b.pa, lim: b.lim || {}, lines: [] });
     c.lines.push(b);
   }
   const spells = classSpells(game, breedId, level);
@@ -94,7 +100,20 @@ export function teamPlan(game, members, { turns = 4 } = {}) {
       stacks.set(key, n + 1);
       return true;
     };
-    for (const a of actions) {
+    // Encouragement gardé par (allié, tour) : le dernier lancé (tour, puis ordre des actions)
+    const lastEnc = new Map();
+    actions.forEach((a, i) => {
+      if (!ENCOURAGEMENT.has(a.cast.spellId)) return;
+      for (const line of a.cast.lines) {
+        const who = line.target === 'allies' ? team.map((_, j) => j) : line.target === 'self' ? [a.caster] : [a.target];
+        for (const j of who) for (const r of activeTurns(line, a.caster, j, turns, a.turn)) {
+          const key = `${j}|${r}`;
+          const prev = lastEnc.get(key);
+          if (prev === undefined || actions[prev].turn < a.turn || (actions[prev].turn === a.turn && prev < i)) lastEnc.set(key, i);
+        }
+      }
+    });
+    actions.forEach((a, ai) => {
       spent[a.caster][a.turn] += a.cast.pa;
       a.cast.lines.forEach((line, li) => {
         const who = ENEMY.has(line.target) || line.target === 'allies' ? team.map((_, j) => j)
@@ -111,13 +130,14 @@ export function teamPlan(game, members, { turns = 4 } = {}) {
             on = activeTurns(line, j, j, turns, t);
           } else on = activeTurns(line, a.caster, j, turns, a.turn);
           for (const r of on) {
+            if (ENCOURAGEMENT.has(a.cast.spellId) && lastEnc.get(`${j}|${r}`) !== ai) continue;
             if (!room(j, r, a, li)) continue;
             for (const [k, v] of Object.entries(line.effects)) put(into[j][r], k === 'carac' ? team[j].mainStat : k, v * scale);
           }
           for (const r of thenTurns(line, a.caster, j, turns, a.turn)) for (const [k, v] of Object.entries(line.then.effects)) put(into[j][r], k, v);
         }
       });
-    }
+    });
     let total = 0;
     const rows = team.map((m, j) => {
       const perTurn = [];
