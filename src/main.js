@@ -409,6 +409,77 @@ function itemSheet(it) {
 const ELEMENT_DO_KEY = { feu: 'doFeu', eau: 'doEau', terre: 'doTerre', air: 'doAir', neutre: 'doNeutre' };
 
 // Frise du mode leveling : un bouton par palier, puis le bilan du palier choisi
+// ---------- Sauvegardes ----------
+// Stuffs générés gardés dans le navigateur (localStorage), avec un nom modifiable
+
+const SAVED_STORE = 'dofus-optimizer-saved';
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem(SAVED_STORE)) || []; } catch { return []; }
+}
+function writeSaved(list) {
+  try { localStorage.setItem(SAVED_STORE, JSON.stringify(list)); return true; } catch { return false; }
+}
+
+// Nom par défaut : mode, classe, niveau (ou paliers), élément
+function defaultName(r) {
+  const cfg = (r.tiers ? r.tiers[0].result : r).config;
+  const breed = game.breeds.find(b => b.id === cfg.breedId)?.n || '';
+  const lvl = r.tiers ? `niv. ${r.tiers[0].level} à ${r.tiers.at(-1).level}` : `niv. ${cfg.level}`;
+  return `${r.tiers ? 'Leveling' : 'Stuff'} ${breed} ${lvl} ${cfg.elements.map(el => EL_LABEL[el]).join('-')}`;
+}
+
+function saveBar() {
+  return `<form class="save-bar" id="saveForm">
+    <label class="field">Nom de la fiche<input id="saveName" maxlength="80" value="${esc(lastResult.draftName ?? lastResult.savedName ?? defaultName(lastResult))}"></label>
+    <button type="submit" class="ghost">Sauvegarder</button>
+  </form>`;
+}
+
+function bindSaveBar() {
+  // le nom tapé survit au changement de palier (le stuff est redessiné)
+  $('#saveName').oninput = e => { lastResult.draftName = e.target.value; };
+  $('#saveForm').onsubmit = e => {
+    e.preventDefault();
+    const name = $('#saveName').value.trim() || defaultName(lastResult);
+    const { savedName, draftName, ...result } = lastResult;
+    const list = loadSaved();
+    list.unshift({ id: Date.now(), name, savedAt: new Date().toISOString(), result });
+    if (!writeSaved(list)) { setStatus('Sauvegarde impossible : le stockage du navigateur est plein ou bloqué.', 'error'); return; }
+    lastResult.savedName = name;
+    delete lastResult.draftName;
+    setStatus(`Fiche « ${name} » sauvegardée.`, 'ok');
+    renderSaved();
+  };
+}
+
+function renderSaved() {
+  const list = loadSaved();
+  $('#tab-saved').innerHTML = list.length ? `<ul class="saved">${list.map(x => {
+    const r = x.result;
+    const score = r.tiers ? `${r.tiers.length} paliers` : `${fmt(r.score)} dégâts`;
+    return `<li><div><strong>${esc(x.name)}</strong><small>${score} · sauvegardée le ${new Date(x.savedAt).toLocaleDateString('fr-FR')}</small></div>
+      <button type="button" class="ghost" data-open="${x.id}">Ouvrir</button>
+      <button type="button" class="ghost danger" data-delsaved="${x.id}" aria-label="Supprimer ${esc(x.name)}">Supprimer</button></li>`;
+  }).join('')}</ul>` : '<p class="empty">Aucune fiche sauvegardée. Génère un stuff puis clique sur « Sauvegarder ».</p>';
+  $('#tab-saved').querySelectorAll('[data-open]').forEach(b => b.onclick = () => {
+    const x = loadSaved().find(s => s.id === Number(b.dataset.open));
+    if (!x) return;
+    lastResult = { ...x.result, savedName: x.name };
+    selectedTier = 0;
+    selectedSpell = null;
+    renderStuff();
+    renderSim();
+    showTab('stuff');
+    setStatus(`Fiche « ${x.name} » ouverte.`, 'ok');
+  });
+  $('#tab-saved').querySelectorAll('[data-delsaved]').forEach(b => b.onclick = () => {
+    const x = loadSaved().find(s => s.id === Number(b.dataset.delsaved));
+    if (!x || !confirm(`Supprimer la fiche « ${x.name} » ?`)) return;
+    writeSaved(loadSaved().filter(s => s.id !== x.id));
+    renderSaved();
+  });
+}
+
 function levelingHeader() {
   const L = lastResult;
   if (!L?.tiers) return '';
@@ -446,6 +517,7 @@ function renderStuff() {
     ['Divers', ['tacle', 'fuite', 'retPA', 'retPM', 'esqPA', 'esqPM', 'ini', 'pp', 'soins']],
   ];
   $('#tab-stuff').innerHTML = `
+    ${saveBar()}
     ${levelingHeader()}
     <div class="score-row">
       ${Object.entries(r.elementScores).map(([el, v]) => `<div class="score el-${el}"><span>${EL_LABEL[el]}</span><strong>${fmt(v)}</strong><small>dégâts moyens par sort (sans cible)</small></div>`).join('')}
@@ -474,6 +546,7 @@ function renderStuff() {
     <table class="compare"><tbody>${r.fmComparison.filter(o => o.gain > 0).map(o => `<tr class="${o.trans ? 'trans' : ''}"><td>${esc(o.label)}</td><td>+${o.pct.toFixed(2)} %</td><td>+${fmt(o.gain)}</td></tr>`).join('')}</tbody></table>
     ${passiveNotes ? `<h2>Passifs pris en compte</h2><ul class="passives">${passiveNotes}</ul>` : ''}
   `;
+  bindSaveBar();
   $('#tab-stuff').querySelectorAll('[data-tierview]').forEach(b => b.onclick = () => {
     selectedTier = Number(b.dataset.tierview);
     selectedSpell = null;
@@ -558,11 +631,11 @@ function renderSim() {
 
 // ---------- Onglets ----------
 
-document.querySelectorAll('[data-tab]').forEach(btn => btn.onclick = () => {
-  document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b === btn)));
-  $('#tab-stuff').hidden = btn.dataset.tab !== 'stuff';
-  $('#tab-sim').hidden = btn.dataset.tab !== 'sim';
-});
+function showTab(name) {
+  document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+  document.querySelectorAll('.tab').forEach(t => { t.hidden = t.id !== `tab-${name}`; });
+}
+document.querySelectorAll('[data-tab]').forEach(btn => btn.onclick = () => showTab(btn.dataset.tab));
 
 // ---------- Démarrage ----------
 
@@ -570,3 +643,4 @@ game = await fetch(`${import.meta.env.BASE_URL}game.json`).then(r => r.json());
 worker.postMessage({ type: 'game', game });
 $('#dataInfo').textContent = `${game.items.length} items · ${Object.keys(game.sets).length} panoplies · données DofusDB du ${new Date(game.builtAt).toLocaleDateString('fr-FR')}`;
 renderConfig();
+renderSaved();

@@ -17,6 +17,10 @@ npm run data
 
 Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`, et `node test/run-leveling.mjs` pour le mode leveling.
 
+## Fiches sauvegardées
+
+Un stuff généré (ou un plan de leveling) se sauvegarde sous un nom modifiable, proposé par défaut à partir du mode, de la classe, du niveau et de l'élément (« Stuff Eniripsa niv. 200 Feu »). L'onglet Sauvegardes liste les fiches pour les rouvrir ou les supprimer. Elles sont gardées dans le navigateur (localStorage) : elles ne passent pas d'un navigateur ou d'un appareil à l'autre.
+
 ## Mode leveling
 
 Un stuff par palier de niveau (par défaut 50, 80, 110, 150 et 200, avec des PA / PM minimums propres à chaque palier). Les niveaux d'obtention des sorts de l'élément sont proposés comme paliers. Les paliers sont optimisés **ensemble** : changer un item coûte une pénalité, réglée par « changer un item seulement s'il rapporte au moins X % de dégâts » (3 % par défaut). Le moteur garde donc les panoplies qui restent bonnes plusieurs paliers au lieu de tout racheter, comme les stuffs de leveling des guides. Chaque palier affiche les items gardés et nouveaux, et ses dégâts comparés au meilleur stuff possible à ce niveau sans rien garder.
