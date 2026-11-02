@@ -74,8 +74,9 @@ function renderConfig() {
         <label><input type="radio" name="attack" value="dist" ${config.attack === 'dist' ? 'checked' : ''}>Distance</label>
         <label><input type="radio" name="attack" value="melee" ${config.attack === 'melee' ? 'checked' : ''}>Mêlée</label>
       </fieldset>
-      <fieldset class="seg"><legend>Passifs comptés sur</legend>
+      <fieldset class="seg seg3"><legend>Passifs comptés sur</legend>
         <label title="Moyenne sur un combat de 5 tours"><input type="radio" name="scenario" value="moyen" ${config.scenario === 'moyen' ? 'checked' : ''}>Combat moyen</label>
+        <label title="Le premier tour du combat"><input type="radio" name="scenario" value="tour1" ${config.scenario === 'tour1' ? 'checked' : ''}>Tour 1</label>
         <label title="Le meilleur tour pour frapper"><input type="radio" name="scenario" value="burst" ${config.scenario === 'burst' ? 'checked' : ''}>Tour de burst</label>
       </fieldset>
       <fieldset class="seg seg3"><legend>Critique</legend>

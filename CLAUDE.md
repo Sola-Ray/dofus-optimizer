@@ -30,6 +30,7 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 - 2 % d'exo de dommages ≈ 1 chance sur 1 000, 4 % existe (quelques items par an). Ne pas ajouter de commentaires de rareté dans l'interface (jugé « cringe »).
 - % sorts et % distance se multiplient : il faut les équilibrer (`improveFinishes`).
 - Mode critique : Auto compare « tous les sorts de l'élément à 100 % » et « sans critique ».
+- Passifs : trois scénarios (combat moyen, tour 1, burst). Les PA gagnés en combat valent des dégâts par tour (+1 PA à 12 PA ≈ +8 %), sinon le moteur ignorait l'Ocre que joue Koza.
 - Dofus Sylvestre : +8 Puissance par PM utilisé sur 2 tours, très fort (moyen 8 × PM, burst 16 × PM).
 - Référence : le stuff de Koza (Eni feu très riche, Sylvestre) fait ≈ 827 dégâts moyens sans passifs dans notre formule.
 
