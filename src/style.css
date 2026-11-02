@@ -199,3 +199,8 @@ li.el-air strong { color: var(--air); }
   background: linear-gradient(90deg, var(--gold) var(--pct, 0%), #5a4a24 var(--pct, 0%));
   transition: background .2s linear;
 }
+
+.exo-notes { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12.5px; }
+.exo-notes li { padding: 3px 0 3px 10px; border-left: 3px solid var(--line); margin-bottom: 4px; color: var(--muted); }
+.exo-notes li.used { border-left-color: #7cb7ff; }
+.exo-notes li.skip { border-left-color: var(--warn); }

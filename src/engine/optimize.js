@@ -689,6 +689,29 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   return { problem, final, stats, perItem, transPerItem, passives, realScore: score(stats, ctx), ctx };
 }
 
+// Pourquoi chaque exo PA / PM / PO coché est utilisé ou non. Un exo coché n'est jamais imposé :
+// le moteur ne le pose que s'il sert un minimum demandé ; sinon une autre finition rapporte plus.
+function exoNotes(cfg, stats, perItem) {
+  const notes = [];
+  for (const k of SINGLE_EXO) {
+    const K = k.toUpperCase();
+    if (!cfg.fm[`exo${K}`]) continue;
+    const used = Object.values(perItem).some(f => f[k]);
+    const min = cfg.min[k];
+    const have = Math.round(stats[k] || 0);
+    if (used && min !== undefined && have - 1 < min) {
+      notes.push({ k, used, text: `Exo ${K} utilisé : sans lui tu serais à ${have - 1} ${K}, sous ton minimum de ${min}.` });
+    } else if (used) {
+      notes.push({ k, used, text: `Exo ${K} utilisé : il ne coûte aucun dégât ici, aucune autre finition ne rapportait plus sur cet item.` });
+    } else {
+      notes.push({ k, used, text: min !== undefined
+        ? `Exo ${K} non utilisé : ton minimum de ${min} ${K} est atteint sans lui (${have}), et d'autres finitions rapportent plus de dégâts.`
+        : `Exo ${K} non utilisé : sans minimum de ${K} demandé, il n'augmente pas les dégâts ; d'autres finitions rapportent plus.` });
+    }
+  }
+  return notes;
+}
+
 // solver.open(lp) -> session persistante, solver.solve(lp, options) -> résultat ponctuel ;
 // les modes de critique tournent en parallèle
 export async function optimize(solver, game, config, onProgress = () => {}) {
@@ -730,6 +753,7 @@ export async function optimize(solver, game, config, onProgress = () => {}) {
       failed: modes.length > runs.length ? lastError?.message : null,
     },
     fmComparison: fmComparison(problem, stats, passives),
+    exoNotes: exoNotes(cfg, stats, perItem),
     violations,
     unmetConditions: unmet,
     candidates: problem.items.length,

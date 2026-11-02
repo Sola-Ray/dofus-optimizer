@@ -328,6 +328,7 @@ function renderStuff() {
       <div class="score"><span>Points de carac.</span><strong>${Object.entries(r.points).map(([k, v]) => `${v} ${STAT_LABEL[k]}`).join(', ') || '—'}</strong><small>${r.pointsCost} / 995 points utilisés</small></div>
     </div>
     ${critBanner(r)}
+    ${(r.exoNotes || []).length ? `<ul class="exo-notes">${r.exoNotes.map(n => `<li class="${n.used ? 'used' : 'skip'}">${esc(n.text)}</li>`).join('')}</ul>` : ''}
     <div class="items">
       ${items.map(it => `
         <article class="item">
