@@ -24,9 +24,11 @@ export const PASSIVES = {
     burst: s => ({ finaux: Math.min(10, 3 * 3 * critChance(s)) }),
     note: 'Suppose 3 sorts par tour : les cumuls dépendent de ton taux de critique.',
   },
+  // Vulbis et Ocre : déclencheur « début de tour » avec 1 tour de délai dans les données du jeu,
+  // donc rien au tour 1 ; sur 5 tours, au mieux 4 déclenchements.
   8396: { // Vulbis : +10 % finaux si aucune attaque subie depuis le tour précédent
-    moyen: { finaux: 5 }, burst: { finaux: 10 },
-    note: 'Suppose que tu n\'es pas attaqué un tour sur deux.',
+    moyen: { finaux: 4 }, burst: { finaux: 10 },
+    note: 'Ne se déclenche qu\'à partir du tour 2. Suppose que tu n\'es pas attaqué un tour sur deux.',
   },
   18888: { // Tacheté : +20 Dommages le tour suivant si tu as frappé
     moyen: { do: 16 }, burst: { do: 20 },
@@ -36,8 +38,8 @@ export const PASSIVES = {
     note: 'Demande d\'alterner attaques en mêlée et à distance. Poison non compté.',
   },
   8394: { // Ocre : +1 PA au début du tour si aucune attaque subie depuis le tour précédent
-    moyen: s => perTurn(s, 0.5), burst: s => perTurn(s, 1),
-    note: PA_NOTE + ' Suppose que tu n\'es pas attaqué un tour sur deux.',
+    moyen: s => perTurn(s, 0.4), burst: s => perTurn(s, 1),
+    note: PA_NOTE + ' Ne se déclenche qu\'à partir du tour 2. Suppose que tu n\'es pas attaqué un tour sur deux.',
   },
   6828: { // Abyssal : +1 PM sans ennemi au contact, sinon +1 PA
     moyen: s => perTurn(s, 0.3), burst: s => perTurn(s, 1),
@@ -96,11 +98,9 @@ export const PASSIVES = {
   11357: { moyen: {}, burst: {} }, // Buhorado : dommages poussée seulement
 };
 
-// Premier tour du combat. Passif absent = aucun effet au tour 1.
+// Premier tour du combat. Passif absent = aucun effet au tour 1 (Vulbis et Ocre : délai d'un tour).
 const TOUR1 = {
   5952: s => ({ finaux: critChance(s) }), // Turquoise : les critiques du tour profitent aux sorts suivants
-  8396: { finaux: 10 }, // Vulbis : pas encore attaqué
-  8394: s => perTurn(s, 1), // Ocre : pas encore attaqué
   5454: { finaux: 20 }, // Nébuleux : tour impair
   28516: s => ({ puissance: 8 * (s.pm || 0) }), // Sylvestre : tous les PM de ce tour seulement
   14908: { crit: 100 }, // Surpryz
