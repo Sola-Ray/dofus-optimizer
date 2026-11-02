@@ -25,6 +25,9 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 - Objets de MJ à exclure : conditions `PX`, `PN`, `GM`.
 - Runes de transcendance : `typeId` 211 ; le niveau de la rune est le niveau minimum de l'item.
 - Les sorts ont plusieurs grades (`minPlayerLevel`) : `grades` dans `game.json`, choisis selon le niveau du perso.
+- **Sous-sorts et états absents** : `fetch-data.mjs` ne télécharge que les sorts des classes et des items ; les ~460 sorts lancés par un sort (effets 1160, 792, 2160…) et les noms d'états (`spell-states`) n'y sont pas. Le catalogue de buffs (`src/engine/buffs.js`) code donc à la main ce qui passe par eux.
+- **Masque de cibles** (`targetMask`) : sens des lettres documenté en tête de `buffs.js` (lu dans le client Dofus 2 décompilé, vérifié sur des sorts). Piège : le script d'un sort peut réserver un effet à un cas que le masque ne dit pas (Vacarme : +25 % finaux en zone « toute la carte » pour les Feux Follets seulement).
+- **Lignes de dégâts en double** : beaucoup de sorts répètent une ligne (variante en zone, variante par état du lanceur, ligne réservée aux invocations ou à un état de la cible). `directLines` dans `damage.js` ne garde que ce qui frappe un ennemi ordinaire lors d'un lancer direct ; sans ça Vacarme comptait double et Flèche Dévorante 7 fois. Même ligne dans la même zone = vrai second coup (Dagues Boomerang). Les poisons comptent pour un déclenchement. Sorts à cumul (Torrent Arcanique) : `SPELL_RULES`.
 
 ## Règles validées avec le joueur
 
@@ -34,7 +37,7 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 - Mode critique : Auto compare « tous les sorts de l'élément à 100 % » et « sans critique ».
 - Passifs : trois scénarios (combat moyen, tour 1, burst). Les PA gagnés en combat valent des dégâts par tour (+1 PA à 12 PA ≈ +8 %), sinon le moteur ignorait l'Ocre que joue Koza.
 - Dofus Sylvestre : +8 Puissance par PM utilisé sur 2 tours, très fort (moyen 8 × PM, burst 16 × PM).
-- Référence : le stuff de Koza (Eni feu très riche, Sylvestre) fait ≈ 827 dégâts moyens sans passifs dans notre formule.
+- Référence : le stuff de Koza (Eni feu très riche, Sylvestre) faisait ≈ 827 dégâts moyens sans passifs, mais avant `directLines` (Vacarme compté double) : à recalculer.
 
 ## Performance
 

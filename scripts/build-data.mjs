@@ -142,11 +142,34 @@ function spellInfo(id) {
     const m = SPELL_LINES[e.effectId];
     if (!m) return [];
     const min = e.diceNum, max = Math.max(e.diceNum, e.diceSide);
-    return [{ k: m[0], el: m[1], min, max, crit, tm: e.targetMask || '' }];
+    // tr = déclencheur (poison de début / fin de tour…), z = zone : servent à écarter les lignes
+    // qui ne sont pas un coup direct sur la cible (voir directLines dans damage.js)
+    const z = e.zoneDescr ? `${e.zoneDescr.shape}:${e.zoneDescr.param1}` : '';
+    return [{ k: m[0], el: m[1], min, max, crit, tm: e.targetMask || '', tr: e.triggers && e.triggers !== 'I' ? e.triggers : undefined, z }];
+  });
+  // Effets autres que les dégâts (buffs, malus, états, sorts lancés…) : matière du catalogue de buffs.
+  // k = stat du moteur quand l'effet modifie une caractéristique, e = id d'effet, d = durée en tours,
+  // tm = cibles (« a » alliés, « c » lanceur…), z = forme et taille de la zone, txt = texte du jeu
+  const fx = (list, crit) => list.flatMap(e => {
+    if (SPELL_LINES[e.effectId] || HIDDEN_EFFECTS.has(e.effectId)) return [];
+    const ef = effects.get(e.effectId);
+    // sans opérateur + / -, l'effet n'est pas un gain de stat même s'il pointe une caractéristique
+    // (265 « -X dommages reçus » pointe Dommages sans opérateur)
+    const key = ef && /^[+-]$/.test(ef.characteristicOperator) && CHARAC[ef.characteristic];
+    const sign = ef?.characteristicOperator === '-' ? -1 : 1;
+    return [{
+      e: e.effectId, k: key || undefined, sign: key ? sign : undefined, min: e.diceNum, max: Math.max(e.diceNum, e.diceSide), v: e.value || undefined,
+      d: e.duration, delay: e.delay || undefined, tm: e.targetMask || '', z: e.zoneDescr ? [e.zoneDescr.shape, e.zoneDescr.param1] : undefined,
+      tr: e.triggers && e.triggers !== 'I' ? e.triggers : undefined, crit: crit || undefined, txt: effectText(e) || undefined,
+    }];
   });
   const grade = g => ({
     pa: g.apCost, cc: g.criticalHitProbability, po: [g.minRange, g.range], lvl: g.minPlayerLevel,
     lines: [...lines(g.effects || [], false), ...lines(g.criticalEffect || [], true)],
+    // limites de lancer : par tour, par cible, relance (tours), relance initiale, relance globale,
+    // st = effets du sort cumulables sur une même cible (1 = relancer rafraîchit, ≤ 0 = sans limite)
+    lim: { n: g.maxCastPerTurn, nt: g.maxCastPerTarget, cd: g.minCastInterval, cd0: g.initialCooldown || undefined, gcd: g.globalCooldown > 0 ? g.globalCooldown : undefined, st: g.maxStack },
+    fx: [...fx(g.effects || [], false), ...fx(g.criticalEffect || [], true)],
   });
   // grades = progression du sort selon le niveau du personnage (le dernier est celui du niveau 200)
   return { id, n: fr(s.name), d: fr(s.description), img: s.iconId, ...grade(l), grades: lv.map(grade) };

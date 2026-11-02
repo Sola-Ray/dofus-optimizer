@@ -6,10 +6,54 @@
 import { ELEMENTS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES, ELEMENT_RF } from './rules.js';
 import { passiveEffect } from './passives.js';
 
-// Sort au niveau du personnage : grade le plus haut déjà débloqué, null si pas encore appris
+// Sorts dont les dégâts ne se lisent pas tels quels dans les données, codés à la main.
+//   stack : dommages de base augmentés à chaque cumul (Torrent Arcanique : +2 par combinaison
+//           élémentaire, 6 au plus ; 3 combinaisons supposées avant de le lancer)
+export const SPELL_RULES = {
+  14342: { stack: { per: 2, n: 3, max: 6 }, note: 'Torrent Arcanique : 3 combinaisons élémentaires supposées avant le lancer (+2 dommages de base chacune, 6 au plus).' },
+};
+
+// Lignes de dégâts qui frappent la cible quand on lance le sort sur un ennemi, sans état particulier :
+//   - les lignes déclenchées plus tard (poisons de début / fin de tour…) comptent pour un seul
+//     déclenchement, à part : elles ne sont jamais prises pour un doublon d'un coup direct ;
+//   - une ligne qui exige un état sur la cible (EN dans le masque, voir buffs.js) ne s'applique pas ;
+//     « sans l'état » (eN) est vrai par défaut. FN (« est le monstre N ») ne filtre rien ici ;
+//   - un état exigé sur le lanceur (*EN) : quand le sort a des variantes pour plusieurs états du
+//     lanceur, l'une s'applique toujours (Pandawa Sobre / Saoul, Rekop) et on garde la première ; avec
+//     un seul état possible, la ligne demande une mise en place et ne compte pas (Glas) ;
+//   - la même ligne répétée dans une autre zone est une variante (Vacarme sur un Feu Follet, Pendule…) :
+//     comptée une fois. Répétée dans la même zone, c'est un vrai second coup (Dagues Boomerang).
+//   - la ligne doit pouvoir toucher un ennemi ordinaire : A (ennemis), L (hors invocations) ou M
+//     (monstres) ; les lignes réservées aux invocations (J, I, S) ou aux alliés sont écartées.
+const TARGET_STATE = /(^|,)E\d/;
+const casterState = l => /(^|,)\*E(\d+)/.exec(l.tm)?.[2];
+const hitsEnemy = l => (l.tm || 'A').split(',').some(t => t === 'A' || t === 'L' || t === 'M');
+export function directLines(spell) {
+  const states = [...new Set((spell.lines || []).filter(l => !l.tr).map(casterState).filter(Boolean))];
+  const out = [];
+  for (const l of spell.lines || []) {
+    const st = casterState(l);
+    const damage = l.k === 'dmg' || l.k === 'vol';
+    if (damage && (!hitsEnemy(l) || TARGET_STATE.test(l.tm) || (st && (states.length < 2 || st !== states[0])))) continue;
+    const twin = damage && out.find(o => !o.tr === !l.tr && o.k === l.k && o.el === l.el && o.min === l.min && o.max === l.max && o.crit === l.crit);
+    if (twin && twin.z !== l.z) continue;
+    out.push(l);
+  }
+  const rule = SPELL_RULES[spell.id];
+  if (rule?.stack) {
+    const add = rule.stack.per * Math.min(rule.stack.n, rule.stack.max);
+    return out.map(l => (l.k === 'dmg' ? { ...l, min: l.min + add, max: l.max + add } : l));
+  }
+  return out;
+}
+
+// Sort au niveau du personnage : grade le plus haut déjà débloqué, null si pas encore appris.
+// Les lignes gardées sont celles d'un lancer direct sur un ennemi (directLines).
 export function spellAtLevel(spell, level = 200) {
   const grade = (spell.grades || [spell]).filter(g => g.lvl <= level).pop();
-  return grade ? { ...spell, ...grade } : null;
+  if (!grade) return null;
+  const sp = { ...spell, ...grade };
+  return { ...sp, lines: directLines(sp) };
 }
 
 export function classSpells(game, breedId, level = 200) {
