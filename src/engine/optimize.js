@@ -6,7 +6,7 @@
 // tangente au point trouvé, ce qui resserre la borne jusqu'à converger.
 import {
   BASE, STAT_POINTS, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
-  FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
+  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
 import { classSpells, elementSpells, score, elementScores } from './damage.js';
@@ -270,9 +270,18 @@ function buildLP(problem, cuts) {
       rows.push(` fmpe${it.idx}:${pct.map(k => ` + e${it.idx}_${k}`).join('')} - ${cfg.fm.pctExo} pe${it.idx} <= 0`);
       binaries.push(`pe${it.idx}`); touches.push(`pe${it.idx}`);
     }
-    for (const k of ks.filter(k => it.fmKind[k] === 'heavy')) touches.push(`e${it.idx}_${k}`);
-    if (transOk(it)) touches.push(`tr${it.idx}`);
-    if (touches.length) rows.push(` touch${it.idx}:${touches.map(v => ` + ${v}`).join('')} - x${it.idx} <= 0`);
+    // L'exo lourd exclut l'exo % et la transcendance, mais peut recevoir un over dans le poids restant
+    // (101 au total : exo PM 90 + 1 % critique 10, exo PO 51 + 50…). Over, exo % et transcendance s'excluent.
+    const heavy = ks.filter(k => it.fmKind[k] === 'heavy');
+    const exclusive = touches.filter(v => !v.startsWith('ov'));
+    if (transOk(it)) { touches.push(`tr${it.idx}`); exclusive.push(`tr${it.idx}`); }
+    const heavyRow = [...exclusive, ...heavy.map(k => `e${it.idx}_${k}`)];
+    if (heavyRow.length) rows.push(` touch${it.idx}:${heavyRow.map(v => ` + ${v}`).join('')} - x${it.idx} <= 0`);
+    if (touches.length > 1) rows.push(` touchb${it.idx}:${touches.map(v => ` + ${v}`).join('')} - x${it.idx} <= 0`);
+    for (const k of heavy) {
+      const cut = cfg.fm.overBudget - Math.max(0, FM_ITEM_WEIGHT - w[k]);
+      if (ov.length && cut > 0) rows.push(` fmhv${it.idx}_${k}:${ov.map(o => term(w[o], `e${it.idx}_${o}`)).join('')} + ${cut} e${it.idx}_${k} <= ${cfg.fm.overBudget}`);
+    }
   }
   // Transcendance : tr = item transcendé, n_k = nombre de runes de la stat k
   const transKeys = Object.keys(problem.trans);
@@ -465,7 +474,18 @@ async function finishItems(solver, problem, sol, grad) {
       bins.push(t); opts.push(t);
       addC(r.k, r.v, t); obj += term(value(r.k) * r.v, t);
     }
-    if (opts.length) rows.push(` one${it.idx}:${opts.map(v => ` + ${v}`).join('')} <= 1`);
+    // Une finition par item, sauf exo lourd + over si le poids total tient dans 101
+    const overs = opts.filter(v => v.startsWith('o'));
+    const heavies = opts.filter(v => v.startsWith('h'));
+    const others = opts.filter(v => !v.startsWith('o') && !v.startsWith('h'));
+    if (heavies.length + others.length) rows.push(` one${it.idx}:${[...heavies, ...others].map(v => ` + ${v}`).join('')} <= 1`);
+    if (overs.length + others.length) rows.push(` oneb${it.idx}:${[...overs, ...others].map(v => ` + ${v}`).join('')} <= 1`);
+    const overW = Object.keys(it.fmCap).filter(k => it.fmKind[k] === 'over').map(k => term(problem.runeWeight[k], `e${it.idx}_${k}`)).join('');
+    for (const h of heavies) {
+      const k = h.slice(h.indexOf('_') + 1);
+      const cut = cfg.fm.overBudget - Math.max(0, FM_ITEM_WEIGHT - problem.runeWeight[k]);
+      if (overW && cut > 0) rows.push(` hv${it.idx}_${k}:${overW} + ${cut} ${h} <= ${cfg.fm.overBudget}`);
+    }
   }
   for (const [k, vs] of Object.entries(heavy)) rows.push(` heavy_${k}:${vs.map(v => ` + ${v}`).join('')} <= 1`);
 
@@ -533,35 +553,127 @@ function fmComparison(problem, stats, passives) {
 
 // ---------- Boucle principale ----------
 
-async function solveMode(solver, game, cfg, mode, onProgress) {
-  const problem = prepare(game, cfg);
-  problem.setsById = game.sets;
-  problem.mode = mode;
+// Garde par emplacement les K meilleurs items selon plusieurs directions (gradient des dégâts,
+// + PA, + PM, + critique), plus les Dofus, les passifs et les items imposés.
+const PRUNE_K = 40;
 
-  // Point de départ : tous les points dans les caracs des éléments joués
+function rebuildProblem(problem, items) {
+  items = items.map((it, idx) => ({ ...it, idx }));
+  const useful = new Set(problem.sets.map(s => s.id));
+  const bySet = {};
+  for (const it of items) if (it.set && useful.has(it.set)) (bySet[it.set] ||= []).push(it.idx);
+  const sets = [];
+  for (const [id, idxs] of Object.entries(bySet)) {
+    if (idxs.length < 2) continue;
+    const s = problem.setsById[id];
+    const bonus = idxs.map((_, n) => s.b[Math.min(n, s.b.length - 1)] || {});
+    bonus.push(s.b[Math.min(idxs.length, s.b.length - 1)] || {});
+    sets.push({ id: Number(id), n: s.n, items: idxs, bonus, maxK: idxs.length });
+  }
+  return { ...problem, items, sets };
+}
+
+function pruneTopK(problem, startStats, K) {
+  const g = makeCuts(problem, startStats, { items: [] })[0].g;
+  const setMax = {};
+  for (const s of problem.sets) setMax[s.id] = s.bonus[s.bonus.length - 1];
+  const lin = (it, w) => {
+    let v = 0;
+    for (const [k, c] of Object.entries(w)) {
+      v += c * ((it.st[k] || 0) + (it.fmCap[k] || 0));
+      if (it.set && setMax[it.set]) v += c * (setMax[it.set][k] || 0);
+    }
+    return v;
+  };
+  const dirs = [g, { ...g, pa: 1 }, { ...g, pm: 1 }, { ...g, pa: 1, pm: 1 }, { ...g, crit: (g.crit || 0) + 0.02 }];
+  const keep = new Set();
+  const bySlot = {};
+  for (const it of problem.items) (bySlot[it.s] ||= []).push(it);
+  for (const list of Object.values(bySlot)) {
+    for (const w of dirs) [...list].sort((a, b) => lin(b, w) - lin(a, w)).slice(0, K).forEach(it => keep.add(it.id));
+    list.filter(it => it.passive || it.s === 'dofus' || problem.cfg.forced.includes(it.id)).forEach(it => keep.add(it.id));
+  }
+  return rebuildProblem(problem, problem.items.filter(it => keep.has(it.id)));
+}
+
+// Coupe de Kelley -> ligne { terms, rhs } pour une session persistante
+const cutRow = c => ({
+  terms: {
+    t: 1,
+    ...Object.fromEntries(Object.entries(c.g).map(([k, g]) => [`T_${k}`, -g])),
+    ...Object.fromEntries(Object.entries(c.h).map(([i, h]) => [`x${i}`, -h])),
+  },
+  rhs: c.rhs,
+});
+
+// Boucle de Kelley sur un modèle persistant : coupes ajoutées à chaud, départ sur la solution précédente
+async function kelley(solver, problem, cuts, start, onProgress, phase) {
+  const session = await solver.open(buildLP(problem, cuts));
+  try {
+    if (start) await session.warmStart(start);
+    let best = null, upper = Infinity;
+    for (let iter = 0; iter < problem.cfg.maxIterations; iter++) {
+      const r = await session.run({ time_limit: 60, mip_rel_gap: 1e-4 });
+      if (r.infeasible || !r.feasible) {
+        const why = problem.mode === 'crit' ? `Impossible d'atteindre ${problem.critTarget} % critique avec ces minimums.` : 'Aucun stuff ne respecte ces minimums.';
+        throw new Error(r.infeasible ? why : 'Le solveur n\'a pas trouvé de solution à temps.');
+      }
+      // l'objectif n'est une borne que si l'optimum est prouvé
+      if (r.optimal) upper = Math.min(upper, r.objective);
+      const cur = readSolution(problem, r.cols);
+      const curStats = solutionStats(problem, cur);
+      const val = score(curStats, ctxOf(problem, cur.items.filter(it => it.passive).map(it => it.passive)));
+      if (!best || val > best.value) best = { ...cur, value: val, cols: r.cols };
+      onProgress({ mode: problem.mode, phase, iter: iter + 1, value: best.value, items: problem.items.length });
+      if (Math.log(best.value) >= upper - 1e-3) break;
+      const newCuts = makeCuts(problem, curStats, cur);
+      cuts.push(...newCuts);
+      await session.addCuts(newCuts.map(cutRow));
+      await session.warmStart(r.cols);
+    }
+    return best;
+  } finally {
+    session.close();
+  }
+}
+
+async function solveMode(solver, game, cfg, mode, onProgress) {
+  const full = prepare(game, cfg);
+  full.setsById = game.sets;
+  full.mode = mode;
+
+  // Tangentes de départ : le point « sans item » plus trois points de stats de fin de jeu
+  // plausibles, pour que la première résolution tombe déjà près de l'optimum.
   const startPoints = {};
   for (const el of cfg.elements) startPoints[ELEMENT_STAT[el]] = Math.floor(400 / cfg.elements.length);
-  let cur = { items: [], points: startPoints, fm: {} };
-  let curStats = solutionStats(problem, cur);
-  const cuts = [...makeCuts(problem, curStats, cur)];
+  const startStats = solutionStats(full, { items: [], points: startPoints, fm: {} });
+  const ref = { puissance: 300, do: 25, doCrit: 90, crit: mode === 'crit' ? full.critTarget : 0, pctSorts: 8, pctDist: 8, pctMelee: 8 };
+  for (const el of cfg.elements) { ref[ELEMENT_STAT[el]] = 1000; ref[ELEMENT_DO[el]] = 60; }
 
-  let best = null, upper = Infinity;
-  for (let iter = 0; iter < cfg.maxIterations; iter++) {
-    const lp = buildLP(problem, cuts);
-    const r = await solver.solve(lp, { time_limit: 30, mip_rel_gap: 1e-4 });
-    if (r.Status !== 'Optimal' && r.Status !== 'Time limit reached') {
-      const why = mode === 'crit' ? `Impossible d'atteindre ${problem.critTarget} % critique avec ces minimums.` : 'Aucun stuff ne respecte ces minimums.';
-      throw new Error(r.Status === 'Infeasible' ? why : `Solveur : ${r.Status}`);
+  // Phase 1 : items élagués. Phase 2 : tous les items, en partant de la solution de la phase 1.
+  const p1 = full.items.length > 600 ? pruneTopK(full, startStats, PRUNE_K) : full;
+  const cuts = [...makeCuts(p1, startStats, { items: [] })];
+  for (const scale of [0.6, 1, 1.4]) {
+    const st = { ...startStats };
+    for (const [k, v] of Object.entries(ref)) st[k] = (st[k] || 0) + scale * v;
+    cuts.push(...makeCuts(p1, st, { items: [] }));
+  }
+  let best = await kelley(solver, p1, cuts, null, onProgress, 1);
+  let problem = p1;
+  if (p1 !== full) {
+    const toFull = {};
+    for (const it of full.items) toFull[it.id] = it.idx;
+    const mapIdx = i => toFull[p1.items[i].id];
+    const fullCuts = cuts.map(c => ({ g: c.g, rhs: c.rhs, h: Object.fromEntries(Object.entries(c.h).map(([i, h]) => [mapIdx(+i), h])) }));
+    // Solution de départ renommée vers les indices du modèle complet ; les panoplies absentes à 0 item
+    const start = {};
+    for (const [name, v] of Object.entries(best.cols)) {
+      const m = /^(x|e|ov|pe|tr|g)(\d+)(.*)$/.exec(name);
+      start[m ? `${m[1]}${mapIdx(+m[2])}${m[3]}` : name] = v;
     }
-    upper = Math.min(upper, r.ObjectiveValue);
-    cur = readSolution(problem, r.Columns);
-    curStats = solutionStats(problem, cur);
-    const passives = cur.items.filter(it => it.passive).map(it => it.passive);
-    const val = score(curStats, ctxOf(problem, passives));
-    if (!best || val > best.value) best = { ...cur, value: val };
-    onProgress({ mode, iter: iter + 1, value: best.value, items: problem.items.length });
-    if (Math.log(best.value) >= upper - 1e-3) break;
-    cuts.push(...makeCuts(problem, curStats, cur));
+    for (const s of full.sets) if (!Object.keys(start).some(k => k.startsWith(`y${s.id}_`))) start[`y${s.id}_0`] = 1;
+    best = await kelley(solver, full, fullCuts, start, onProgress, 2);
+    problem = full;
   }
 
   // Forgemagie exacte item par item, runes de transcendance, puis stats finales
@@ -575,7 +687,8 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   return { problem, final, stats, perItem, transPerItem, passives, realScore: score(stats, ctx), ctx };
 }
 
-// solver.solve(lp, options) -> Promise du résultat HiGHS ; les modes tournent en parallèle
+// solver.open(lp) -> session persistante, solver.solve(lp, options) -> résultat ponctuel ;
+// les modes de critique tournent en parallèle
 export async function optimize(solver, game, config, onProgress = () => {}) {
   const cfg = { ...DEFAULT_CONFIG, ...config, fm: { ...DEFAULT_CONFIG.fm, ...config.fm }, min: { ...(config.min ?? DEFAULT_CONFIG.min) } };
   // une finition décochée = valeur max à 0 (le moteur ne la propose pas)

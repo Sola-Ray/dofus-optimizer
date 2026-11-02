@@ -182,13 +182,13 @@ function run() {
 
 worker.onmessage = ({ data }) => {
   if (data.type === 'progress') {
-    setStatus(`${MODE_LABEL[data.mode]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort · ${data.cores} cœurs`);
+    setStatus(`${MODE_LABEL[data.mode]} · ${data.phase === 1 ? 'meilleurs items' : 'tous les items'} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
   } else if (data.type === 'result') {
     $('#run').disabled = false;
     lastResult = data.result;
     selectedSpell = null;
     const warn = [...data.result.violations.map(v => `${STAT_LABEL[v.key] || v.key} < ${v.min}`), ...data.result.unmetConditions.map(n => `condition non remplie : ${n}`)];
-    const took = ` (${Math.round(data.result.seconds)} s sur ${data.result.cores} cœurs)`;
+    const took = ` (${Math.round(data.result.seconds)} s)`;
     setStatus(warn.length ? `Stuff trouvé${took}, avec des réserves : ${warn.join(', ')}` : `Stuff trouvé${took}.`, warn.length ? 'warn' : 'ok');
     renderStuff();
     renderSim();
