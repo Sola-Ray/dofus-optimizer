@@ -42,6 +42,9 @@ const GELANO = 2469;
 const RES_KEYS = Object.values(ELEMENT_RES);
 const PCT_KEYS = ['pctSorts', 'pctDist', 'pctMelee'];
 const EPS_RES = 1e-6; // départage : à dégâts égaux, préférer plus de résistances
+// Rés. moyenne : chaque élément compte au plus 50 %, au-delà c'est de la résistance gâchée
+const RES_CAP = 50;
+const resMoy = st => RES_KEYS.reduce((t, r) => t + Math.min(st[r] || 0, RES_CAP), 0) / 5;
 
 // ---------- Préparation ----------
 
@@ -331,7 +334,14 @@ export function buildSections(problem, cuts) {
 
   // Minimums demandés
   for (const [k, v] of Object.entries(cfg.min)) {
-    if (k === 'resMoy') rows.push(` min_resMoy:${RES_KEYS.map(r => ` + 0.2 T_${r}`).join('')} >= ${v}`);
+    if (k === 'resMoy') {
+      // rm_r = min(T_r, 50) : la contrainte ne pousse rm_r que vers le haut, deux bornes suffisent
+      for (const r of RES_KEYS) {
+        rows.push(` rmc_${r}: rm_${r} - T_${r} <= 0`);
+        bounds.push(` -1000 <= rm_${r} <= ${RES_CAP}`);
+      }
+      rows.push(` min_resMoy:${RES_KEYS.map(r => ` + 0.2 rm_${r}`).join('')} >= ${v}`);
+    }
     else if (keys.includes(k)) rows.push(` min_${k}: T_${k} >= ${v}`);
   }
 
@@ -518,19 +528,24 @@ async function finishItems(solver, problem, sol, grad) {
 
   const mins = { ...cfg.min };
   if (problem.mode === 'crit' && problem.critTarget > 0) mins.crit = Math.max(mins.crit || 0, problem.critTarget);
-  const minRows = [];
+  const minRows = [], minBounds = [];
   for (const [k, v] of Object.entries(mins)) {
     if (k === 'resMoy') {
-      const terms = RES_KEYS.flatMap(r => contrib[r] || []).map(([c, x]) => term(c / 5, x)).join('');
-      const have = RES_KEYS.reduce((t, r) => t + (base[r] || 0), 0) / 5;
-      if (terms) minRows.push(` m_resMoy:${terms} >= ${num(v - have)}`);
+      // rq_r = min(base_r + forgemagie_r, 50), comme dans le modèle principal
+      const capped = RES_KEYS.filter(r => contrib[r]);
+      for (const r of capped) {
+        minRows.push(` rqc_${r}: rq_${r}${contrib[r].map(([c, x]) => term(-c, x)).join('')} <= ${num(base[r] || 0)}`);
+        minBounds.push(` -1000 <= rq_${r} <= ${RES_CAP}`);
+      }
+      const have = RES_KEYS.filter(r => !contrib[r]).reduce((t, r) => t + Math.min(base[r] || 0, RES_CAP), 0) / 5;
+      if (capped.length) minRows.push(` m_resMoy:${capped.map(r => ` + 0.2 rq_${r}`).join('')} >= ${num(v - have)}`);
     } else if (contrib[k]) minRows.push(` m_${k}:${contrib[k].map(([c, x]) => term(c, x)).join('')} >= ${num(v - (base[k] || 0))}`);
   }
   if (!bins.length) return { perItem: {}, transPerItem: {}, fm: {} };
 
   const build = withMins => ['Maximize', obj, 'Subject To', ...rows, ...(withMins ? minRows : []),
     ...(rows.length || minRows.length ? [] : [' dummy: 0 x0 >= 0']),
-    'Bounds', ...bounds, ...(gens.length ? ['General', ' ' + gens.join(' ')] : []), 'Binary', ' ' + bins.join(' '), 'End'].join('\n');
+    'Bounds', ...bounds, ...(withMins ? minBounds : []), ...(gens.length ? ['General', ' ' + gens.join(' ')] : []), 'Binary', ' ' + bins.join(' '), 'End'].join('\n');
   let r = await solver.solve(build(true), { time_limit: 10 });
   if (r.Status !== 'Optimal') r = await solver.solve(build(false), { time_limit: 10 });
 
@@ -749,8 +764,7 @@ function improveFinishes(problem, best, finish, ctx) {
   };
   const mins = { ...cfg.min };
   if (problem.mode === 'crit' && problem.critTarget > 0) mins.crit = Math.max(mins.crit || 0, problem.critTarget);
-  const ok = st => Object.entries(mins).every(([k, v]) => (k === 'resMoy'
-    ? RES_KEYS.reduce((t, r) => t + (st[r] || 0), 0) / 5 : st[k] || 0) >= v - 1e-6);
+  const ok = st => Object.entries(mins).every(([k, v]) => (k === 'resMoy' ? resMoy(st) : st[k] || 0) >= v - 1e-6);
   const evaluate = () => {
     const st = solutionStats(problem, { ...best, fm: totals(), trans: {} });
     return ok(st) ? score(st, ctx) : -Infinity;
@@ -844,8 +858,8 @@ export function buildResult(cfg, chosen, runs, failed = null) {
   const { problem, final, stats, perItem, transPerItem, passives, ctx } = chosen;
 
   const violations = Object.entries(cfg.min)
-    .filter(([k, v]) => (k === 'resMoy' ? RES_KEYS.reduce((t, r) => t + (stats[r] || 0), 0) / 5 : stats[k] || 0) < v - 1e-6)
-    .map(([k, v]) => ({ key: k, min: v, got: stats[k] }));
+    .filter(([k, v]) => (k === 'resMoy' ? resMoy(stats) : stats[k] || 0) < v - 1e-6)
+    .map(([k, v]) => ({ key: k, min: v, got: k === 'resMoy' ? resMoy(stats) : stats[k] }));
   const unmet = final.items.filter(it => !checkCriteria(it.crit, stats)).map(it => it.n);
 
   return {
