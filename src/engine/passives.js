@@ -5,7 +5,9 @@
 //   burst : le meilleur tour pour frapper
 //   tour1 : le premier tour du combat (aucune attaque subie, aucun cumul encore, tour impair)
 // Champs possibles : finaux (% dommages finaux, multiplicatif), pctSorts, pctDist, pctMelee,
-// cible (% dommages subis par la cible), et n'importe quelle stat additive (do, puissance, crit…).
+// cible (% dommages subis par la cible), poison (dommages de base par tour sur la cible, voir
+// poisonDamage dans damage.js), et n'importe quelle stat additive (do, puissance, crit…).
+// none : passif sans effet sur les dégâts (défense, soin, placement…), avec ce qu'il fait.
 // Une fonction reçoit les stats du perso (s) quand l'effet en dépend.
 // def : réduction moyenne des dégâts subis (affichage seulement).
 
@@ -33,9 +35,13 @@ export const PASSIVES = {
   18888: { // Tacheté : +20 Dommages le tour suivant si tu as frappé
     moyen: { do: 16 }, burst: { do: 20 },
   },
-  18629: { // Ébène : +2 % dist/mêlée en alternant, 5 fois, 3 tours, + poison
-    moyen: { pctDist: 4, pctMelee: 4 }, burst: { pctDist: 10, pctMelee: 10 },
-    note: 'Demande d\'alterner attaques en mêlée et à distance. Poison non compté.',
+  // Ébène : +2 % distance par attaque en mêlée, +2 % mêlée par attaque à distance (3 tours, 5 fois).
+  // Les deux dans le même tour : poison de 16 sur 2 tours, relance 2 tours, soit un poison actif en
+  // continu ; il ne frappe qu'à partir du tour 2 (4 tours sur 5).
+  18629: {
+    moyen: { pctDist: 4, pctMelee: 4, poison: 16 * 0.8 }, burst: { pctDist: 10, pctMelee: 10, poison: 16 },
+    note: 'Demande une attaque en mêlée et une à distance à chaque tour : en ne jouant qu\'à distance, '
+      + 'seul le bonus en mêlée se déclenche et il ne sert à rien. Poison de 16 par tour à partir du tour 2.',
   },
   8394: { // Ocre : +1 PA au début du tour si aucune attaque subie depuis le tour précédent
     moyen: s => perTurn(s, 0.4), burst: s => perTurn(s, 1),
@@ -80,7 +86,27 @@ export const PASSIVES = {
   14930: { moyen: s => turns(s, 5, [[1, 2, 0]]), burst: s => perTurn(s, 2), note: PA_NOTE },
   14931: { moyen: s => turns(s, 5, [[1, 3, 0]]), burst: s => perTurn(s, 3), note: PA_NOTE + ' Les 2 PM perdus ne sont pas comptés.' },
   14932: { moyen: s => turns(s, 5, [[1, 4, 0]]), burst: s => perTurn(s, 4), note: PA_NOTE + ' Les 4 PM perdus ne sont pas comptés.' },
-  14948: { moyen: {}, burst: { pctMelee: 8 }, note: 'Mêlée uniquement.' },
+  // Pryximite : 2 % mêlée par ennemi à 3 cases ou moins, au début et à la fin du tour 1, pendant 3 tours
+  14948: { moyen: { pctMelee: 4 }, burst: { pctMelee: 8 }, note: 'Mêlée uniquement. Suppose 2 ennemis proches : +4 % au tour 1, +8 % aux tours 2 et 3.' },
+  11368: { // Audace de Dodge : chaque tour, au hasard, +10 % critique et 1 PM, ou 40 Fuite et Dommages Poussée
+    moyen: { crit: 5 }, burst: { crit: 10 },
+    note: 'Une chance sur deux à chaque tour d\'avoir +10 % de critique. Les Dommages Poussée ne sont pas comptés.',
+  },
+  12147: { // Frisson de Brumaire : +1 PA pendant 1 tour quand un ennemi est achevé (2 fois)
+    moyen: s => perTurn(s, 0.3), burst: s => perTurn(s, 1),
+    note: PA_NOTE + ' Suppose un ennemi achevé tous les 3 tours, pendant ou juste avant ton tour.',
+  },
+  15975: { // Pestilence de Corruption : poison de 18 aux ennemis proches en remontant à 90 % de vie
+    moyen: { poison: 18 * 0.3 }, burst: { poison: 18 },
+    note: 'Poison de 18 sur les ennemis à 2 cases ou moins quand tu remontes à 90 % de vie : suppose que ça arrive un tour sur trois.',
+  },
+  17006: { // Domakuro : jusqu'à +16 Dommages par fin de tour (4 premiers tours), réduit par chaque attaque
+    moyen: {}, burst: {},
+    note: 'Aucun bonus dès 2 attaques dans le tour : compté nul pour un perso qui frappe.',
+  },
+  31607: { moyen: {}, burst: {}, note: 'Dofoozbz : dépend des attaques subies par tes invocations, non compté.' },
+  31862: { moyen: {}, burst: {}, note: 'Ponctualité d\'Henual : le PA demande d\'être téléporté, non compté.' },
+  11352: { moyen: {}, burst: {}, note: 'Crocobur : 15 de vol de vie aux entités au contact, non compté.' },
   // --- Légendaires ---
   7331: { // Dofusteuse : +400 dans un élément par tour (eau > terre > air > feu)
     moyen: s => statBonus(s, 100), burst: s => statBonus(s, 400),
@@ -96,6 +122,22 @@ export const PASSIVES = {
   31856: { moyen: { finaux: 3 }, burst: { finaux: 4 } }, // Oto Mustam : 1 % par ennemi en vie (4 max)
   31860: { moyen: { cible: 4 }, burst: { cible: 4, finaux: 10 }, note: 'Thanatena : augmente aussi tes dégâts subis.' },
   11357: { moyen: {}, burst: {} }, // Buhorado : dommages poussée seulement
+
+  // --- Sans effet sur les dégâts ---
+  ...Object.fromEntries([
+    [5453, 'soin des alliés alignés'], [6149, 'soin'], [8393, 'bouclier'], [8418, 'esquive PA / PM'],
+    [10164, 'bouclier'], [11358, 'réduction des dommages des alliés'], [11363, 'bouclier'],
+    [11365, 'résistances'], [11366, 'PM'], [11367, 'poussée'], [12344, 'bouclier'],
+    [14762, 'bouclier'], [14763, 'bouclier'], [14764, 'bouclier'], [14902, 'état Intaclable'], [14919, 'PM'],
+    [14926, 'soin'], [14933, 'retrait'], [14934, 'esquive'], [14939, 'résistances des invocations'],
+    [14940, 'invisibilité'], [14941, 'désenvoûtement'], [14943, 'soins reçus des alliés'], [14945, 'bouclier'],
+    [14949, 'réduction des dommages'], [14950, 'état Pesanteur'], [15739, 'retrait PM, PM gagnés en achevant'],
+    [15984, 'attirance'], [15996, 'vol de résistances'], [17307, 'bouclier'], [18674, 'soin'],
+    [31857, 'renvoi de dommages et retrait de portée'], [31858, 'retrait'], [31859, 'Dommages Poussée et PM aux alliés'],
+    [31861, 'soin'], [31880, 'résistances'], [31881, 'état Indéplaçable'],
+    [8862, 'aucun texte dans les données'], [28355, 'aucun texte dans les données'],
+    [28364, 'aucun texte dans les données'], [30679, 'aucun texte dans les données'],
+  ].map(([id, what]) => [id, { moyen: {}, burst: {}, none: what }])),
 };
 
 // Premier tour du combat. Passif absent = aucun effet au tour 1 (Vulbis et Ocre : délai d'un tour).
@@ -108,6 +150,7 @@ const TOUR1 = {
   14903: s => perTurn(s, 1, -10), 14904: s => perTurn(s, 2, -35), 14905: s => perTurn(s, 3, -50), // Pryssion
   14930: s => perTurn(s, 2), 14931: s => perTurn(s, 3), 14932: s => perTurn(s, 4), // Prycipithon
   14948: { pctMelee: 4 }, // Pryximite
+  11368: { crit: 5 }, // Audace de Dodge : une chance sur deux
   7331: s => ((s.elements || []).includes('eau') ? { chance: 400 } : {}), // Dofusteuse : tour 1 = eau
   11361: s => perTurn(s, -1), // Ganymède : tour impair, -1 PA
   11359: { finaux: 7 }, // Trompe-la-Mort : plein de vie

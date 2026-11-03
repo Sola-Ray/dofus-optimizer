@@ -24,7 +24,7 @@ En mode stuff, chaque item a deux boutons :
 - **Alternatives** : tous les items de l'emplacement, essayés un par un à la place de l'actuel, triés par dégâts avec l'écart en %. Le reste du stuff est figé (items, forgemagie, points de caractéristique). Le nouvel item reprend la finition de l'ancien quand elle tient sur lui. Les problèmes sont affichés sur chaque ligne : finition impossible, minimum non tenu, condition de port non remplie. Un item déjà porté ailleurs est rangé en bas.
 - **Modifier** : chaque ligne d'effet et de forgemagie devient un champ, pour taper son jet réel.
 
-Après une modification, un bandeau donne les dégâts face au stuff généré et liste les problèmes. **Recalculer la FM** refait seulement la forgemagie de tout le stuff, sans changer les items ni les points. **Revenir au stuff généré** annule tout. Un stuff modifié se sauvegarde comme un autre.
+Après une modification, un bandeau donne les dégâts face au stuff généré et liste les problèmes. **Recalculer la FM** refait seulement la forgemagie de tout le stuff, sans changer les items ni les points. **Recalculer le stuff autour** garde les items que tu as mis à la place et relance le moteur complet pour tout le reste, avec les réglages qui ont produit le stuff (les lignes retouchées à la main ne sont pas gardées). **Revenir au stuff généré** annule tout. Un stuff modifié se sauvegarde comme un autre.
 
 ## Fiches sauvegardées
 
@@ -72,6 +72,6 @@ Par défaut : sans critique, sans forgemagie ni transcendance, parchemins régla
 
 ## Limites connues
 
-- **Passifs** des Dofus, prysmaradites et légendaires : traduits à la main dans `src/engine/passives.js`, en trois scénarios (combat moyen sur 5 tours, tour 1, tour de burst). Les PA gagnés en combat (Ocre, Prycipithon, Ganymède…) comptent comme des dégâts en plus sur le tour. Chaque hypothèse est affichée sous le stuff.
+- **Passifs** des Dofus, prysmaradites et légendaires : traduits à la main dans `src/engine/passives.js`, en trois scénarios (combat moyen sur 5 tours, tour 1, tour de burst). Les PA gagnés en combat (Ocre, Prycipithon, Ganymède…) comptent comme des dégâts en plus sur le tour. Les poisons des passifs (Ébène, Pestilence) profitent de la caractéristique, de la Puissance et des dommages finaux, et sont répartis sur les sorts du tour. Les passifs sans effet sur les dégâts (boucliers, soins, résistances, placement) sont affichés comme tels. Chaque hypothèse est affichée sous le stuff.
 - **Sorts** : seuls les effets directs de dégâts, de vol de vie et de soin sont simulés. Les effets déclenchés par un autre sort, les glyphes, les poisons et les états ne le sont pas.
 - **Taux de réussite de la forgemagie** : Ankama ne publie pas de formule. Le modèle « une finition par item » et les budgets d'over viennent de guides communautaires (Gamosaurus, Huzounet, Papycha, Tofus). La place exacte des % sorts / distance avant les résistances reste à confirmer en jeu.

@@ -1,7 +1,7 @@
 import { DEFAULT_CONFIG, AUTO_ELEMENTS } from './engine/optimize.js';
 import { DEFAULT_LEVELING, suggestTiers } from './engine/leveling.js';
 import { teamPlan, initiativeOf } from './engine/team.js';
-import { simulateSpell, classSpells } from './engine/damage.js';
+import { simulateSpell, classSpells, passivePoison } from './engine/damage.js';
 import { turnDamage, equippedWeapon } from './engine/rotation.js';
 import { PASSIVES } from './engine/passives.js';
 import { evaluateStuff, placeItem, alternatives } from './engine/edit.js';
@@ -343,7 +343,9 @@ worker.onmessage = ({ data }) => {
       .map(w => (t.level ? `niv. ${t.level} : ${w}` : w)));
     const took = ` (${Math.round(data.result.seconds)} s)`;
     const what = data.result.tiers ? `${tiers.length} stuffs trouvés` : 'Stuff trouvé';
-    setStatus(warn.length ? `${what}${took}, avec des réserves : ${warn.join(', ')}` : `${what}${took}.`, warn.length ? 'warn' : 'ok');
+    const around = aroundNames ? ` autour de ${aroundNames.join(', ')}` : '';
+    aroundNames = null;
+    setStatus(warn.length ? `${what}${around}${took}, avec des réserves : ${warn.join(', ')}` : `${what}${around}${took}.`, warn.length ? 'warn' : 'ok');
     renderStuff();
     renderSim();
   } else if (data.type === 'refinished') {
@@ -359,6 +361,7 @@ worker.onmessage = ({ data }) => {
     renderStuff();
     renderSim();
   } else if (data.type === 'error') {
+    aroundNames = null;
     if (refinishing) { refinishing = false; renderStuff(); setStatus(data.message, 'error'); return; }
     stopProgress();
     $('#run').disabled = false;
@@ -432,6 +435,7 @@ const ELEMENT_DO_KEY = { feu: 'doFeu', eau: 'doEau', terre: 'doTerre', air: 'doA
 
 let editing = null; // index dans lastResult.items de l'item en cours de modification
 let refinishing = false;
+let aroundNames = null; // items imposés pendant « Recalculer le stuff autour »
 const ALT_SHOWN = 30;
 const editable = () => lastResult && !lastResult.tiers;
 
@@ -446,6 +450,28 @@ function applyItems(items, lost) {
   renderSim();
 }
 
+// Items mis à la place de ceux du stuff généré
+const changedItems = r => {
+  const before = new Set(r.original.items.map(it => it.id));
+  return r.items.filter(it => !before.has(it.id));
+};
+
+// Relance le moteur complet en imposant les items remplacés, avec les réglages qui ont produit ce stuff
+function runAround() {
+  const r = lastResult;
+  const ids = changedItems(r).map(it => it.id);
+  const cfg = {
+    ...r.config, autoElement: false,
+    forced: [...new Set([...r.config.forced, ...ids])], banned: r.config.banned.filter(id => !ids.includes(id)),
+  };
+  aroundNames = changedItems(r).map(it => it.n);
+  $('#run').disabled = true;
+  setStatus('Préparation du modèle…');
+  startProgress(cfg.critMode === 'auto' ? 2 : 1);
+  worker.postMessage({ type: 'run', config: cfg });
+  renderStuff();
+}
+
 function editBanner(r) {
   if (!r.original) return '';
   const pct = r.original.score > 0 ? (100 * (r.score - r.original.score)) / r.original.score : 0;
@@ -455,6 +481,7 @@ function editBanner(r) {
     ${issues.length ? `<ul>${issues.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
     <div class="edit-actions">
       <button type="button" class="ghost" id="refinish" ${refinishing ? 'disabled' : ''}>${refinishing ? 'Recalcul de la FM…' : 'Recalculer la FM'}</button>
+      ${changedItems(r).length ? `<button type="button" class="ghost" id="around" title="Garde ${esc(changedItems(r).map(it => it.n).join(', '))} et recalcule tout le reste" ${$('#run')?.disabled ? 'disabled' : ''}>Recalculer le stuff autour</button>` : ''}
       <button type="button" class="ghost" id="revert">Revenir au stuff généré</button>
     </div>
   </div>`;
@@ -513,6 +540,7 @@ function bindEdits() {
     renderStuff();
     renderSim();
   };
+  if ($('#around')) $('#around').onclick = runAround;
   if ($('#refinish')) $('#refinish').onclick = () => {
     refinishing = true;
     const { original, savedName, draftName, ...r } = lastResult;
@@ -526,8 +554,10 @@ function bindEdits() {
 function openAlternatives(idx) {
   const cur = lastResult.items[idx];
   const list = alternatives(game, lastResult, idx);
+  document.querySelectorAll('.alt-dialog').forEach(d => d.remove());
   const dlg = document.createElement('dialog');
   dlg.className = 'alt-dialog';
+  const shut = () => { dlg.close(); dlg.remove(); };
   dlg.innerHTML = `
     <header><div><small>${SLOT_LABEL[cur.s]}</small><h3>À la place de ${esc(cur.n)}</h3></div>
       <button type="button" class="ghost" data-close>Fermer</button></header>
@@ -548,17 +578,17 @@ function openAlternatives(idx) {
   };
   fill('');
   dlg.querySelector('.alt-search').oninput = e => fill(e.target.value.trim());
-  dlg.querySelector('[data-close]').onclick = () => dlg.close();
+  dlg.querySelector('[data-close]').onclick = shut;
   dlg.onclose = () => dlg.remove();
   dlg.onclick = e => {
-    if (e.target === dlg) { dlg.close(); return; }
+    if (e.target === dlg) { shut(); return; }
     const b = e.target.closest('[data-place]');
     if (!b) return;
     const { item, lost } = placeItem(game, lastResult, idx, game.items.find(g => g.id === Number(b.dataset.place)));
     const items = lastResult.items.map((it, i) => (i === idx ? item : it));
     const kept = (lastResult.lost || []).filter(l => l.id !== cur.id);
     if (editing === idx) editing = null;
-    dlg.close();
+    shut();
     applyItems(items, [...kept, ...lost.map(text => ({ id: item.id, text }))]);
   };
   document.body.append(dlg);
@@ -666,7 +696,9 @@ function renderStuff() {
   const items = r.items.map((it, idx) => ({ ...it, idx })).sort((a, b) => SLOT_ORDER.indexOf(a.s) - SLOT_ORDER.indexOf(b.s));
   const passiveNotes = r.items.filter(i => i.passive && PASSIVES[i.passive]).map(i => {
     const p = game.passives[i.passive];
-    return `<li><strong>${esc(i.n)}</strong> — ${esc(p?.d || '')}${PASSIVES[i.passive].note ? `<br><em>Hypothèse : ${esc(PASSIVES[i.passive].note)}</em>` : ''}</li>`;
+    const e = PASSIVES[i.passive];
+    const why = e.none ? `<br><em>Sans effet sur les dégâts : ${esc(e.none)}.</em>` : e.note ? `<br><em>Hypothèse : ${esc(e.note)}</em>` : '';
+    return `<li><strong>${esc(i.n)}</strong> — ${esc(p?.d || '')}${why}</li>`;
   }).join('');
   const s = r.stats;
   const groups = [
@@ -753,6 +785,7 @@ function renderSim() {
   const sel = spells.find(s => s.id === selectedSpell);
   const res = sel && sims.get(sel.id);
   const turn = turnDamage(spells, r.stats, ctx, { target, weapon: equippedWeapon(game, r.items) });
+  const poison = passivePoison(r.stats, ctx); // sans résistances de la cible
   const seq = t => t.casts.map(c => `${c.count > 1 ? `${c.count} × ` : ''}${esc(c.n)}`).join(', ') || 'aucun sort';
   const line = row => `<li class="el-${row.el}">${row.kind === 'soin' ? 'Soin' : row.kind === 'vol' ? 'Vol de vie' : 'Dommages'} ${EL_LABEL[row.el] || ''} : <strong>${fmt(row.min)}${row.max !== row.min ? ' – ' + fmt(row.max) : ''}</strong></li>`;
   $('#tab-sim').innerHTML = `
@@ -765,7 +798,7 @@ function renderSim() {
       <div class="grid5">${ELEMENTS.map(el => tField('rf' + EL_LABEL[el], 'Rés. fixe ' + EL_LABEL[el])).join('')}</div>
     </details>
     <section class="turn">
-      <p>Dégâts par tour (${turn.pa} PA) : moyen <strong>${fmt(turn.average.dmg)}</strong> sur un combat de ${turn.average.turns.length} tours · meilleur tour <strong>${fmt(turn.best.dmg)}</strong>${turn.average.dmg > 0 && target.pv > 0 ? ` · ${Math.ceil(target.pv / turn.average.dmg)} tours pour tuer` : ''}</p>
+      <p>Dégâts par tour (${turn.pa} PA) : moyen <strong>${fmt(turn.average.dmg)}</strong>${poison ? ` + ${fmt(poison)} de poison des passifs` : ''} sur un combat de ${turn.average.turns.length} tours · meilleur tour <strong>${fmt(turn.best.dmg)}</strong>${turn.average.dmg > 0 && target.pv > 0 ? ` · ${Math.ceil(target.pv / turn.average.dmg)} tours pour tuer` : ''}</p>
       <p class="turn-seq">Meilleur tour : ${seq(turn.best)}</p>
       <details>
         <summary>Tour par tour</summary>

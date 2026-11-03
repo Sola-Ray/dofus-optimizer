@@ -70,20 +70,21 @@ export function elementSpells(spells, el) {
     if (!normal.length) return [];
     const critical = s.lines.filter(l => l.crit && hits(l, el));
     const avg = ls => ls.reduce((t, l) => t + (l.min + l.max) / 2, 0);
-    return [{ id: s.id, n: avg(normal), c: critical.length ? avg(critical) : avg(normal), cc: critical.length ? s.cc : 0, nLines: normal.length }];
+    return [{ id: s.id, n: avg(normal), c: critical.length ? avg(critical) : avg(normal), cc: critical.length ? s.cc : 0, nLines: normal.length, pa: s.pa }];
   });
 }
 
 // Applique les passifs : stats additives dans les stats, multiplicateurs à part
 export function applyPassives(stats, passiveIds, scenario) {
   const s = { ...stats };
-  const mods = { finaux: [], cible: 0 };
+  const mods = { finaux: [], cible: 0, poison: 0 };
   for (const id of passiveIds) {
     const e = passiveEffect(id, scenario, stats);
     if (!e) continue;
     for (const [k, v] of Object.entries(e)) {
       if (k === 'finaux') mods.finaux.push(v);
       else if (k === 'cible') mods.cible += v;
+      else if (k === 'poison') mods.poison += v;
       else s[k] = (s[k] || 0) + v;
     }
   }
@@ -109,6 +110,16 @@ function expected(sp, el, stats, mult) {
   return mult * ((1 - c) * normal + c * crit);
 }
 
+// Poison d'un passif sur un tour, dans l'élément el. Hypothèse : comme un poison de sort, il profite
+// de la caractéristique, de la Puissance et des multiplicateurs finaux, pas des Dommages fixes ni des
+// % sorts / distance.
+export function poisonDamage(el, s, mods) {
+  if (!mods.poison) return 0;
+  let fin = 1 + (s.pctFinaux || 0) / 100;
+  for (const f of mods.finaux) fin *= 1 + f / 100;
+  return mods.poison * ((100 + (s[ELEMENT_STAT[el]] || 0) + (s.puissance || 0)) / 100) * fin * (1 + mods.cible / 100);
+}
+
 // Objectif du moteur : pour chaque élément joué, moyenne des dégâts attendus de ses sorts ;
 // on maximise l'élément le plus faible (équilibre en multi-élément).
 export function elementScores(stats, ctx) {
@@ -119,8 +130,19 @@ export function elementScores(stats, ctx) {
   for (const el of ctx.elements) {
     const list = ctx.refSpells[el];
     out[el] = list.length ? list.reduce((t, sp) => t + expected(sp, el, s, mult), 0) / list.length : 0;
+    // un poison par tour, réparti sur les sorts lancés dans le tour (PA / coût moyen des sorts)
+    if (mods.poison && list.length) {
+      const cost = list.reduce((t, sp) => t + (sp.pa || 4), 0) / list.length;
+      out[el] += poisonDamage(el, s, mods) / Math.max(1, (s.pa || 12) / cost);
+    }
   }
   return out;
+}
+
+// Dégâts de poison des passifs sur un tour, dans le meilleur élément joué (onglet Simulation)
+export function passivePoison(stats, ctx) {
+  const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements }, ctx.passives || [], ctx.scenario);
+  return Math.max(0, ...ctx.elements.map(el => poisonDamage(el, s, mods)));
 }
 
 export function score(stats, ctx) {
