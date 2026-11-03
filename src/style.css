@@ -293,3 +293,11 @@ button.chip:hover { border-color: var(--gold); }
 .alt-pct.pos { color: var(--ok); }
 .alt-list .ghost { flex: none; padding: 4px 12px; }
 .alt-list .ghost:disabled { opacity: .4; cursor: default; }
+
+/* Sorts à optimiser */
+.spells-pick summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; list-style: none; }
+.spells-pick summary::-webkit-details-marker { display: none; }
+.spells-pick summary h2 { margin: 0; }
+.spells-pick summary small { color: var(--muted); font-size: 12px; }
+.spells-pick .chips { margin-top: 8px; }
+.spells-pick .chip small { color: var(--muted); font-size: 11px; }

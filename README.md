@@ -46,7 +46,7 @@ L'onglet Équipe assemble 2 à 4 fiches sauvegardées et dit **qui buffer, avec 
 
 ## Lignes de dégâts des sorts
 
-Les données répètent souvent une ligne de dégâts : variante en zone (Vacarme sur un Feu Follet), variante selon l'état du lanceur (Pandawa Sobre / Saoul), ligne réservée aux invocations ou à une cible sous un état (Flèche Dévorante). Le moteur ne garde que ce qui frappe un ennemi ordinaire lors d'un lancer direct ; une même ligne dans la même zone reste un vrai second coup (Dagues Boomerang). Les poisons comptent pour un déclenchement. Torrent Arcanique est codé à la main : 3 combinaisons élémentaires supposées avant le lancer (+2 dommages de base chacune).
+Les données répètent souvent une ligne de dégâts : variante en zone (Vacarme sur un Feu Follet), variante selon l'état du lanceur (Pandawa Sobre / Saoul), ligne réservée aux invocations ou à une cible sous un état (Flèche Dévorante). Le moteur ne garde que ce qui frappe un ennemi ordinaire lors d'un lancer direct ; une même ligne dans la même zone reste un vrai second coup (Dagues Boomerang). Les poisons comptent pour un déclenchement. Torrent Arcanique est codé à la main : il frappe dans les 4 éléments à la fois (les Dommages et Dommages critiques comptent sur chaque ligne), avec 3 combinaisons élémentaires supposées avant le lancer (+2 dommages de base chacune). Supernova frappe le meilleur et le pire élément : comptée comme deux lignes.
 
 ## Mode leveling
 
@@ -58,7 +58,8 @@ Par défaut : sans critique, sans forgemagie ni transcendance, parchemins régla
 
 - **Données** : API [DofusDB](https://api.dofusdb.fr). Le script récupère équipements, panoplies, classes, variantes de sorts, sorts et passifs, puis les compacte dans `public/game.json`.
 - **Moteur** : programme linéaire en nombres entiers résolu par [HiGHS](https://github.com/lovasoa/highs-js) (WebAssembly, dans un Web Worker). Les dégâts sont des produits de stats, donc non linéaires. Le moteur maximise leur logarithme par plans coupants : chaque itération ajoute une tangente au point trouvé, jusqu'à convergence (3 à 6 itérations).
-- **Objectif** : dégâts moyens attendus des sorts de l'élément, critique compris. Le moteur décide donc lui-même si jouer critique vaut le coup. En multi-élément, il maximise l'élément le plus faible.
+- **Objectif** : dégâts moyens attendus des sorts optimisés, critique compris. Le moteur décide donc lui-même si jouer critique vaut le coup. En multi-élément, il maximise l'élément le plus faible.
+- **Sorts optimisés** : ceux cochés dans « Sorts à optimiser » (par classe). Sinon, automatique : les sorts d'un combat de 5 tours joué au mieux (limites de lancer et relances), sur des stats de fin de jeu, pondérés par leur nombre de lancers. En multi-élément, un seul combat avec les sorts de tous les éléments : on alterne les éléments pour lancer chaque sort à deux lignes. Les sorts retenus sont affichés au-dessus du stuff.
 - **Élément automatique** : un calcul par élément (feu, eau, terre, air ; le neutre n'est pas proposé), on garde celui qui fait le plus de dégâts. Un mélange d'éléments ne peut pas battre le meilleur élément seul, puisque le multi-élément maximise l'élément le plus faible. En leveling, les éléments sont comparés sur la moyenne des dégâts des paliers. Les calculs tournent en parallèle, mais c'est environ 4 fois plus long.
 
 ## Règles modélisées

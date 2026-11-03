@@ -23,7 +23,7 @@
 //     à relance n'est pas forcément lancé dès qu'il revient), moyenne des dégâts des tours.
 //   - PA constants à chaque tour (stats.pa par défaut). Les passifs suivent ctx.scenario pour tous
 //     les tours ; les PA gagnés par les passifs sont déjà comptés en % de dégâts (voir passives.js).
-import { simulateSpell } from './damage.js';
+import { simulateSpell, SPELL_RULES } from './damage.js';
 
 const NO_TARGET = {};
 
@@ -42,7 +42,8 @@ export function turnOptions(spells, stats, ctx, { target = NO_TARGET, weapon = n
   const played = l => (l.k === 'dmg' || l.k === 'vol') && (l.el === 'best' || ctx.elements.includes(l.el));
   const out = [];
   for (const sp of spells) {
-    const lines = sp.lines.filter(played);
+    // règle « all » (Torrent Arcanique) : s'il touche un élément joué, toutes ses lignes frappent
+    const lines = SPELL_RULES[sp.id]?.all && sp.lines.some(played) ? sp.lines.filter(l => l.k === 'dmg' || l.k === 'vol') : sp.lines.filter(played);
     if (!lines.length || !sp.pa) continue;
     const dmg = simulateSpell({ ...sp, lines }, stats, ctx, target).average;
     if (dmg <= 0) continue;

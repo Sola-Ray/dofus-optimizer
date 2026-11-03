@@ -32,7 +32,9 @@ const SLOT_OF_TYPE = {
 const SPELL_LINES = {
   96: ['dmg', 'eau'], 97: ['dmg', 'terre'], 98: ['dmg', 'air'], 99: ['dmg', 'feu'], 100: ['dmg', 'neutre'],
   91: ['vol', 'eau'], 92: ['vol', 'terre'], 93: ['vol', 'air'], 94: ['vol', 'feu'], 95: ['vol', 'neutre'],
-  2822: ['dmg', 'best'],
+  2822: ['dmg', 'best'], 2828: ['vol', 'best'], 2832: ['dmg', 'worst'],
+  // dommages selon les PM restants (Zénith, Flèche du Jugement) : comptés pleins, lancés avant de bouger
+  1013: ['dmg', 'air'], 1016: ['dmg', 'terre'],
   108: ['soin', 'feu'], 2998: ['soin', 'eau'], 2999: ['soin', 'air'], 3000: ['soin', 'terre'], 3001: ['soin', 'neutre'],
 };
 const PASSIVE_EFFECT = 1175;
@@ -145,7 +147,12 @@ function spellInfo(id) {
     // tr = déclencheur (poison de début / fin de tour…), z = zone : servent à écarter les lignes
     // qui ne sont pas un coup direct sur la cible (voir directLines dans damage.js)
     const z = e.zoneDescr ? `${e.zoneDescr.shape}:${e.zoneDescr.param1}` : '';
-    return [{ k: m[0], el: m[1], min, max, crit, tm: e.targetMask || '', tr: e.triggers && e.triggers !== 'I' ? e.triggers : undefined, z }];
+    // c = ligne d'affichage seulement (forClientOnly : souvent jouée par un sous-sort, sous condition),
+    // dl = retardement en tours, p = probabilité d'une ligne aléatoire (une seule des lignes tirées s'applique)
+    return [{
+      k: m[0], el: m[1], min, max, crit, tm: e.targetMask || '', tr: e.triggers && e.triggers !== 'I' ? e.triggers : undefined, z,
+      c: e.forClientOnly ? 1 : undefined, dl: e.delay || undefined, p: e.random > 0 ? +(e.random / 100).toFixed(4) : undefined,
+    }];
   });
   // Effets autres que les dégâts (buffs, malus, états, sorts lancés…) : matière du catalogue de buffs.
   // k = stat du moteur quand l'effet modifie une caractéristique, e = id d'effet, d = durée en tours,

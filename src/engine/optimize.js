@@ -9,7 +9,8 @@ import {
   FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
-import { classSpells, elementSpells, score, elementScores } from './damage.js';
+import { classSpells, elementSpells, score, elementScores, SPELL_RULES } from './damage.js';
+import { turnDamage } from './rotation.js';
 import { PASSIVES } from './passives.js';
 
 export const DEFAULT_CONFIG = {
@@ -34,6 +35,7 @@ export const DEFAULT_CONFIG = {
   forced: [],
   gelanoPaPm: false, // impose le Gelano (1 PA) exo PM
   maxIterations: 14,
+  spells: [], // sorts à optimiser (ids) ; vide = automatique, voir pickSpells
 };
 
 // Gelano : anneau niveau 60 à 1 PA, imposé avec un exo PM quand gelanoPaPm est coché
@@ -145,17 +147,62 @@ export function prepare(game, cfg) {
   return { ...problemBase(game, cfg), items, sets };
 }
 
+// Sorts dont le moteur maximise la moyenne des dégâts, par élément joué :
+//   - les sorts cochés (cfg.spells) qui frappent dans l'élément, un lancer chacun ;
+//   - sinon (rien de coché pour l'élément) : automatique, les sorts d'un combat de 5 tours joué au
+//     mieux (rotation.js, limites de lancer et relances), pondérés par leur nombre de lancers. Les
+//     stats de référence sont celles d'un perso de fin de jeu équilibré dans les éléments joués ;
+//   - sans sort de l'élément dans la classe, un sort générique.
+const AUTO_STATS = { puissance: 200, crit: 50, doCrit: 100 };
+const pickCache = new Map();
+export function pickSpells(game, cfg) {
+  const key = JSON.stringify([cfg.breedId, cfg.level, cfg.elements, cfg.attack, cfg.min?.pa, cfg.spells]);
+  if (pickCache.has(key)) return pickCache.get(key);
+  const spells = classSpells(game, cfg.breedId, cfg.level);
+  const chosen = new Set(cfg.spells || []);
+  const stats = { ...AUTO_STATS, pa: Math.max(6, cfg.min?.pa || 12) };
+  for (const el of cfg.elements) { stats[ELEMENT_STAT[el]] = 800; stats[ELEMENT_DO[el]] = 60; }
+  const generic = [{ id: 0, cc: 10, pa: 4, w: 1, parts: [{ el: null, n: 25, c: 30, nLines: 1 }] }];
+  const refSpells = {}, spellPicks = {};
+  // Lancers d'un combat joué au mieux avec ces sorts ; en multi-élément, un seul combat avec les
+  // sorts de tous les éléments joués (on alterne les éléments dans le tour pour lancer chaque
+  // sort à deux lignes), puis le combat d'un élément seul s'il n'y apparaît pas
+  const castsOf = list => {
+    const casts = {};
+    const fight = turnDamage(list, stats, { elements: cfg.elements, attack: cfg.attack, scenario: 'moyen', passives: [] }).average.turns;
+    for (const t of fight) for (const c of t.casts) casts[c.id] = (casts[c.id] || 0) + c.count;
+    return casts;
+  };
+  const played = spells.filter(sp => cfg.elements.some(el => elementSpells([sp], el).length));
+  const together = castsOf(played);
+  for (const el of cfg.elements) {
+    const all = elementSpells(spells, el);
+    let list = all.filter(sp => chosen.has(sp.id));
+    let mode = 'choisis';
+    if (!list.length && all.length) {
+      mode = 'auto';
+      list = all.filter(sp => together[sp.id]).map(sp => ({ ...sp, w: together[sp.id] }));
+      // aucun sort propre à l'élément (hors « meilleur élément » et sorts à tous les éléments)
+      const own = sp => !SPELL_RULES[sp.id]?.all && spells.find(x => x.id === sp.id).lines.some(l => l.el === el);
+      if (!list.some(own)) {
+        const alone = castsOf(spells.filter(sp => all.some(a => a.id === sp.id)));
+        list = all.filter(sp => alone[sp.id]).map(sp => ({ ...sp, w: alone[sp.id] }));
+      }
+      if (!list.length) list = all;
+    }
+    refSpells[el] = list.length ? list : generic;
+    spellPicks[el] = { mode: list.length ? mode : 'générique', spells: list.map(sp => ({ id: sp.id, n: spells.find(x => x.id === sp.id)?.n || '', w: sp.w })) };
+  }
+  const out = { refSpells, spellPicks };
+  pickCache.set(key, out);
+  return out;
+}
+
 // Partie du problème qui ne dépend pas des items : sorts de référence, transcendances, critique visé.
 // Sert aussi à évaluer un stuff modifié à la main.
 export function problemBase(game, cfg) {
   const keys = relevantKeys(cfg);
-  const spells = classSpells(game, cfg.breedId, cfg.level);
-  // sans sort de l'élément dans la classe, on prend un sort générique
-  const generic = [{ id: 0, n: 25, c: 30, cc: 10, nLines: 1 }];
-  const refSpells = Object.fromEntries(cfg.elements.map(el => {
-    const list = elementSpells(spells, el);
-    return [el, list.length ? list : generic];
-  }));
+  const { refSpells, spellPicks } = pickSpells(game, cfg);
   const breed = game.breeds.find(b => b.id === cfg.breedId);
 
   // Meilleure rune de transcendance par stat utile
@@ -170,7 +217,7 @@ export function problemBase(game, cfg) {
     return cc.length ? 100 - Math.min(...cc) : 0;
   }));
   return {
-    cfg, keys: [...keys], refSpells, breed, runeWeight: game.runeWeight, setsById: game.sets, trans, critTarget,
+    cfg, keys: [...keys], refSpells, spellPicks, breed, runeWeight: game.runeWeight, setsById: game.sets, trans, critTarget,
     base: baseStats(cfg.level), points: statPoints(cfg.level),
   };
 }
@@ -838,6 +885,8 @@ export function normalizeConfig(game, config) {
   if (!cfg.fm.pctExoOn) cfg.fm.pctExo = 0;
   if (!cfg.fm.overOn) cfg.fm.overBudget = 0;
   if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
+  // sorts cochés : rangés par classe dans l'interface
+  if (config.spellsByBreed) cfg.spells = config.spellsByBreed[cfg.breedId] || [];
   if (cfg.gelanoPaPm) {
     const lvl = gelanoLevel(game);
     if (cfg.level < lvl) throw new Error(`Le Gelano demande le niveau ${lvl}.`);
@@ -881,6 +930,7 @@ export function buildResult(cfg, chosen, runs, failed = null) {
     score: chosen.realScore,
     elementScores: elementScores(stats, ctx),
     ctx: { elements: ctx.elements, attack: ctx.attack, scenario: ctx.scenario, passives },
+    spellPicks: problem.spellPicks,
     crit: {
       mode: chosen.mode, target: problem.critTarget,
       runs: runs.map(r => ({ mode: r.mode, score: r.realScore })),

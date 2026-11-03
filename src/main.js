@@ -136,6 +136,7 @@ function renderConfig() {
       </fieldset>
       <label class="check"><input type="checkbox" id="scroll" ${config.fullScroll ? 'checked' : ''}>Full parchemins (+100 partout)</label>`}
     </section>
+    ${spellSection()}
     ${lv ? levelingSection() : `<section>
       <h2>Minimums à respecter</h2>
       <div class="grid2">
@@ -184,6 +185,20 @@ function renderConfig() {
   bindConfig();
 }
 
+// Sorts à optimiser, cochés par classe (config.spellsByBreed) ; rien de coché = automatique
+function spellSection() {
+  const chosen = new Set(config.spellsByBreed?.[config.breedId] || []);
+  const level = config.mode === 'leveling' ? 200 : config.level;
+  const offensive = classSpells(game, config.breedId, level).filter(sp => sp.lines.some(l => l.k === 'dmg' || l.k === 'vol'));
+  return `<section>
+    <details class="spells-pick" ${chosen.size ? 'open' : ''}>
+      <summary><h2>Sorts à optimiser</h2><small>${chosen.size ? `${chosen.size} coché${chosen.size > 1 ? 's' : ''}` : 'automatique'}</small></summary>
+      <p class="hint">Le moteur maximise les dégâts moyens des sorts cochés. Un élément sans sort coché reste automatique : les sorts d'un combat de 5 tours joué au mieux, pondérés par leur nombre de lancers.</p>
+      <div class="chips">${offensive.map(sp => `<label class="chip"><input type="checkbox" data-spell="${sp.id}" ${chosen.has(sp.id) ? 'checked' : ''}>${esc(sp.n)} <small>${sp.pa} PA</small></label>`).join('')}</div>
+    </details>
+  </section>`;
+}
+
 function onConfigChange(e) {
   const t = e.target;
   const root = $('#config');
@@ -210,6 +225,10 @@ function onConfigChange(e) {
   else if (t.id === 'overBudget') config.fm.overBudget = Number(t.value);
   else if (t.id === 'rollQuality') config.rollQuality = Number(t.value);
   else if (t.dataset.fm) config.fm[t.dataset.fm] = t.checked;
+  else if (t.dataset.spell) {
+    config.spellsByBreed = { ...config.spellsByBreed, [config.breedId]: [...root.querySelectorAll('[data-spell]:checked')].map(i => Number(i.dataset.spell)) };
+    root.querySelector('.spells-pick summary small').textContent = config.spellsByBreed[config.breedId].length ? `${config.spellsByBreed[config.breedId].length} coché(s)` : 'automatique';
+  }
   else if (t.dataset.min) {
     if (t.value === '') delete config.min[t.dataset.min];
     else config.min[t.dataset.min] = Number(t.value);
@@ -717,6 +736,7 @@ function renderStuff() {
     </div>
     ${autoBanner()}
     ${critBanner(r)}
+    ${spellBanner(r)}
     ${editBanner(r)}
     ${(r.exoNotes || []).length ? `<ul class="exo-notes">${r.exoNotes.map(n => `<li class="${n.used ? 'used' : 'skip'}">${esc(n.text)}</li>`).join('')}</ul>` : ''}
     <div class="items">
@@ -760,6 +780,13 @@ function autoBanner() {
   const others = a.runs.filter(x => x.el !== a.chosen).map(x => `${EL_LABEL[x.el]} : ${x.score == null ? 'aucun stuff' : `<strong>${fmt(x.score)}</strong>`}`).join(' · ');
   const best = a.runs.find(x => x.el === a.chosen);
   return `<p class="banner">Élément choisi automatiquement : <strong>${EL_LABEL[a.chosen]}</strong> (${what} ${fmt(best.score)}). ${others}</p>`;
+}
+
+function spellBanner(r) {
+  const picks = r.spellPicks;
+  if (!picks) return '';
+  const label = { auto: 'automatique', choisis: 'cochés', générique: 'sort générique' };
+  return `<p class="banner spells-used">Sorts optimisés : ${Object.entries(picks).map(([el, p]) => `<span class="el-${el}"><strong>${EL_LABEL[el]}</strong> (${label[p.mode]})</span> ${p.spells.map(s => `${esc(s.n)}${s.w > 1 ? ` ×${s.w}` : ''}`).join(', ')}`).join(' · ')}</p>`;
 }
 
 function critBanner(r) {
