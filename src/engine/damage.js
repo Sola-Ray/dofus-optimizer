@@ -7,8 +7,8 @@ import { ELEMENTS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES, ELEMENT_RF } from './r
 import { passiveEffect } from './passives.js';
 
 // Sorts dont les dégâts ne se lisent pas tels quels dans les données, codés à la main.
-//   stack   : dommages de base augmentés à chaque cumul (Torrent Arcanique : +2 par combinaison
-//             élémentaire, 6 au plus ; 3 combinaisons supposées avant de le lancer)
+//   stack   : dommages de base augmentés à chaque cumul, per × min(n, max) sur chaque ligne de dégâts
+//             (Torrent Arcanique : +2 par combinaison élémentaire, 6 au plus ; 3 supposées)
 //   all     : toutes les lignes frappent, quel que soit leur élément (sinon, un sort à plusieurs
 //             éléments n'en applique qu'un : le meilleur, ou celui que demande un état)
 //   none    : aucun dégât direct (les lignes du sort sont jouées plus tard, par un autre effet)
@@ -33,7 +33,44 @@ export const SPELL_RULES = {
   12903: { none: true, note: 'Concentration de Chakra : vol de vie seulement sur dommages de pièges.' },
   32432: { client: true, note: 'Flèche Boomerang : le retour en fin de tour refrappe la cible.' },
   13261: { client: true }, 13147: { client: true }, 13568: { client: true }, // explosions différées sûres
+
+  // Cumuls (effet 293 « +X dommages de base »), en moyenne par lancer sur un combat de 5 tours
+  // joué normalement. n = nombre de cumuls supposé en moyenne au moment du lancer.
+  13146: stack(18, 1.5, 'Pugilat : +18 par lancer dans le tour, 4 lancers supposés (+0, +18, +36, +54).'),
+  13156: stack(20, 1.4, 'Fureur : +20 par lancer (2 fois), relancé chaque tour (+0, +20, puis +40).'),
+  13124: stack(110, 0.5, 'Colère de Iop : +110 à la récupération, un lancer sur deux en profite.'),
+  13111: stack(40, 0.67, 'Épée du Destin : +40 à la récupération, deux lancers sur trois en profitent.'),
+  32435: stack(5, 1, 'Flèche Glacée : +5 par lancer (2 fois), 3 lancers par tour.'),
+  32436: stack(2, 2, 'Flèche d’Immobilisation : +2 par lancer (4 fois).'),
+  32456: stack(40, 1, 'Flèche Punitive : +24 puis +32 aux lancers suivants, relancée chaque tour (environ +40 en moyenne).'),
+  32438: stack(36, 1, 'Flèche d’Expiation : +36 à chacun des deux lancers suivants, relancée dès que possible.'),
+  25882: stack(30, 0.67, 'Mot Secret : +30 s’il n’est pas relancé au tour suivant, lancé un tour sur deux.'),
+  23263: stack(5, 1.5, 'Lance à Incendie : +5 par lancer (4 fois), 3 lancers par tour.'),
+  13768: stack(6, 1.5, 'Carcasse : +6 par lancer sur la Proie (4 fois).'),
+  13762: stack(6, 1.5, 'Os à Moelle : +6 par lancer sur la Proie (4 fois).'),
+  13254: stack(6, 1, 'Flétrissement : +6 par lancer sur une cible Téléfrag (3 fois).'),
+  12815: stack(4, 1, 'Distillation : +4 par poison déclenché, un déclenchement entre deux lancers.'),
+  13144: stack(20, 1.5, 'Tumulte : +20 par ennemi dans la zone, 1 à 2 ennemis.'),
+  23750: stack(12, 1.5, 'Muspel : +12 par ennemi dans la zone, 1 à 2 ennemis.'),
+  32457: stack(10, 2, 'Flèche Massacrante : +10 par entité dans la zone, 2 entités.'),
+  13253: stack(12, 1, 'Rayon Obscur : +12 par Téléfrag dans la zone, 1 Téléfrag.'),
+  13256: stack(24, 0.5, 'Horloge : +24 si la cible est Téléfrag, un lancer sur deux.'),
+  13793: stack(22, 1, 'Muselière : +22 par ennemi au contact du lanceur si la cible est la Proie, 1 ennemi.'),
+  13789: stack(20, 1, 'Dépouille : +20 par allié au contact de la Proie, 1 allié.'),
+  13569: stack(5, 2, 'Inoculation : +5 par ennemi Infecté, 2 Infectés.'),
+  13570: stack(10, 1, 'Force de la Nature : +10 par Arbre Feuillu planté, 1 Arbre.'),
+  13858: stack(9, 0.5, 'Sabotage : +9 par Tourelle évoluée dans la zone, un lancer sur deux.'),
+  13358: stack(5, 3, 'Tourbière : +5 par PM utilisé dans le tour, 3 PM.'),
+  12932: stack(8, 1, 'Chausse-trappe : +8 par piège déclenché, 1 piège entre deux lancers.'),
+  12878: stack(6, 1, 'Fanfaronnade : +6 par placement (attirance, poussée, téléportation), 1 entre deux lancers.'),
+  25861: stack(5, 1, 'Chœur Strident : +5 par Moquerie ou Feu Follet mort, une fois par tour.'),
+  32454: stack(5, 2, 'Œil pour Œil : +5 par attaque ennemie subie au tour précédent, 2 attaques.'),
+  32442: stack(6, 2, 'Flèche de Rédemption : +6 par retrait de PA ou PM réussi, 2 retraits entre deux lancers.'),
+  13469: stack(10, 1, 'Oblitération : +10 par explosion de bombe, 1 explosion entre deux lancers.'),
 };
+function stack(per, n, note) {
+  return { stack: { per, n, max: Infinity }, note };
+}
 
 // Lignes de dégâts qui frappent la cible quand on lance le sort sur un ennemi, sans état particulier :
 //   - les lignes déclenchées plus tard (poisons de début / fin de tour…) comptent pour un seul
@@ -82,7 +119,7 @@ export function directLines(spell) {
   }
   if (rule.stack) {
     const add = rule.stack.per * Math.min(rule.stack.n, rule.stack.max);
-    return out.map(l => (l.k === 'dmg' ? { ...l, min: l.min + add, max: l.max + add } : l));
+    return out.map(l => (isDamage(l) ? { ...l, min: l.min + add, max: l.max + add } : l));
   }
   return out;
 }
