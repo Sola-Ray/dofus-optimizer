@@ -4,6 +4,7 @@ import { teamPlan, initiativeOf } from './engine/team.js';
 import { simulateSpell, classSpells } from './engine/damage.js';
 import { turnDamage, equippedWeapon } from './engine/rotation.js';
 import { PASSIVES } from './engine/passives.js';
+import { evaluateStuff, placeItem, alternatives } from './engine/edit.js';
 import { STAT_LABEL, ELEMENTS } from './engine/rules.js';
 
 const $ = sel => document.querySelector(sel);
@@ -336,6 +337,7 @@ worker.onmessage = ({ data }) => {
     lastResult = data.result;
     selectedSpell = null;
     selectedTier = 0;
+    editing = null;
     const tiers = data.result.tiers || [{ result: data.result }];
     const warn = tiers.flatMap(t => [...t.result.violations.map(v => `${STAT_LABEL[v.key] || v.key} < ${v.min}`), ...t.result.unmetConditions.map(n => `condition non remplie : ${n}`)]
       .map(w => (t.level ? `niv. ${t.level} : ${w}` : w)));
@@ -344,7 +346,20 @@ worker.onmessage = ({ data }) => {
     setStatus(warn.length ? `${what}${took}, avec des réserves : ${warn.join(', ')}` : `${what}${took}.`, warn.length ? 'warn' : 'ok');
     renderStuff();
     renderSim();
+  } else if (data.type === 'refinished') {
+    const { original, savedName, draftName, autoElement, seconds } = lastResult;
+    refinishing = false;
+    const next = evaluateStuff(game, { ...data.result, original, savedName, draftName, autoElement, seconds, lost: [] });
+    // la forgemagie du moteur est linéarisée : sur un stuff sans problème, elle peut faire un peu moins
+    if (!lastResult.issues?.length && next.score < lastResult.score) setStatus('La forgemagie actuelle fait déjà au moins autant de dégâts : rien n\'a changé.', 'ok');
+    else {
+      lastResult = next;
+      setStatus(next.issues.length ? 'Forgemagie recalculée, mais des problèmes restent.' : 'Forgemagie recalculée.', next.issues.length ? 'warn' : 'ok');
+    }
+    renderStuff();
+    renderSim();
   } else if (data.type === 'error') {
+    if (refinishing) { refinishing = false; renderStuff(); setStatus(data.message, 'error'); return; }
     stopProgress();
     $('#run').disabled = false;
     setStatus(data.message, 'error');
@@ -411,6 +426,146 @@ function itemSheet(it) {
 const ELEMENT_DO_KEY = { feu: 'doFeu', eau: 'doEau', terre: 'doTerre', air: 'doAir', neutre: 'doNeutre' };
 
 // Frise du mode leveling : un bouton par palier, puis le bilan du palier choisi
+// ---------- Modifications du stuff généré ----------
+// Remplacer un item (il reprend la finition de l'ancien) ou retoucher ses lignes ; le reste est figé.
+// « Recalculer la FM » refait seulement la forgemagie, items et points de caractéristique gardés.
+
+let editing = null; // index dans lastResult.items de l'item en cours de modification
+let refinishing = false;
+const ALT_SHOWN = 30;
+const editable = () => lastResult && !lastResult.tiers;
+
+// lost : finitions perdues au remplacement, par item ; elles disparaissent si l'item est retouché
+function applyItems(items, lost) {
+  if (!lastResult.original) {
+    const { original, savedName, draftName, ...generated } = lastResult;
+    lastResult.original = structuredClone(generated);
+  }
+  lastResult = evaluateStuff(game, { ...lastResult, items, lost }, lost.map(l => l.text));
+  renderStuff();
+  renderSim();
+}
+
+function editBanner(r) {
+  if (!r.original) return '';
+  const pct = r.original.score > 0 ? (100 * (r.score - r.original.score)) / r.original.score : 0;
+  const issues = r.issues || [];
+  return `<div class="banner edit-banner ${issues.length ? 'warn' : ''}">
+    <p>Stuff modifié : <strong>${fmt(r.score)}</strong> dégâts moyens, contre ${fmt(r.original.score)} pour le stuff généré (${pct >= 0 ? '+' : ''}${pct.toFixed(1)} %).</p>
+    ${issues.length ? `<ul>${issues.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
+    <div class="edit-actions">
+      <button type="button" class="ghost" id="refinish" ${refinishing ? 'disabled' : ''}>${refinishing ? 'Recalcul de la FM…' : 'Recalculer la FM'}</button>
+      <button type="button" class="ghost" id="revert">Revenir au stuff généré</button>
+    </div>
+  </div>`;
+}
+
+// Fiche en mode modification : chaque ligne d'effet et de forgemagie est un champ
+function itemEditor(it) {
+  const row = (k, v, kind) => `<li>${statIcon(k)}<input type="number" class="line-input" value="${v}" data-line="${kind}" data-k="${k}" aria-label="${esc(STAT_LABEL[k])}"> ${esc(STAT_LABEL[k])}${kind === 'st' && it.r?.[k] ? ` <span class="roll">[${it.r[k][0]} à ${it.r[k][1]}]</span>` : ''}</li>`;
+  const free = Object.keys(STAT_LABEL).filter(k => !(k in it.fm));
+  return `<div class="editor" data-editor="${it.idx}">
+    <div class="sheet-sec"><h4>Effets</h4><ul class="lines">${Object.entries(it.st).filter(([k]) => STAT_LABEL[k]).map(([k, v]) => row(k, v, 'st')).join('')}</ul></div>
+    <div class="sheet-sec"><h4>Forgemagie</h4><ul class="lines fm">${Object.entries(it.fm).map(([k, v]) => row(k, v, 'fm')).join('')}</ul>
+      <select class="add-fm" data-addk aria-label="Ligne de forgemagie à ajouter"><option value="">Ajouter une ligne…</option>${free.map(k => `<option value="${k}">${esc(STAT_LABEL[k])}</option>`).join('')}</select>
+      ${it.trans ? `<label class="trans-line"><input type="checkbox" data-trans checked> Transcendance ${esc(it.trans.n)} (+${it.trans.v} ${esc(STAT_LABEL[it.trans.k])})</label>` : ''}
+    </div>
+    <p class="hint">Une ligne de forgemagie à 0 est retirée.</p>
+  </div>`;
+}
+
+function bindEdits() {
+  const root = $('#tab-stuff');
+  root.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+    const idx = Number(b.dataset.edit);
+    editing = editing === idx ? null : idx;
+    renderStuff();
+  });
+  root.querySelectorAll('[data-alt]').forEach(b => b.onclick = () => openAlternatives(Number(b.dataset.alt)));
+  const ed = root.querySelector('[data-editor]');
+  if (ed) {
+    const idx = Number(ed.dataset.editor);
+    const update = change => {
+      const items = structuredClone(lastResult.items);
+      change(items[idx]);
+      applyItems(items, (lastResult.lost || []).filter(l => l.id !== items[idx].id));
+    };
+    ed.querySelectorAll('[data-line]').forEach(inp => inp.onchange = () => update(it => {
+      const v = Number(inp.value) || 0;
+      if (inp.dataset.line === 'st') it.st[inp.dataset.k] = v;
+      else if (v) it.fm[inp.dataset.k] = v;
+      else delete it.fm[inp.dataset.k];
+    }));
+    ed.querySelector('[data-addk]').onchange = e => {
+      const k = e.target.value;
+      if (!k) return;
+      update(it => { it.fm[k] = 1; });
+      $(`[data-editor] [data-line="fm"][data-k="${k}"]`)?.select();
+    };
+    const tr = ed.querySelector('[data-trans]');
+    if (tr) tr.onchange = () => update(it => { it.trans = null; });
+  }
+  if ($('#revert')) $('#revert').onclick = () => {
+    const { savedName, draftName } = lastResult;
+    lastResult = { ...lastResult.original, savedName, draftName };
+    editing = null;
+    setStatus('Stuff généré rétabli.', 'ok');
+    renderStuff();
+    renderSim();
+  };
+  if ($('#refinish')) $('#refinish').onclick = () => {
+    refinishing = true;
+    const { original, savedName, draftName, ...r } = lastResult;
+    worker.postMessage({ type: 'refinish', result: r });
+    setStatus('Recalcul de la forgemagie…');
+    renderStuff();
+  };
+}
+
+// Fenêtre des alternatives d'un emplacement : les 30 meilleures, ou celles dont le nom correspond
+function openAlternatives(idx) {
+  const cur = lastResult.items[idx];
+  const list = alternatives(game, lastResult, idx);
+  const dlg = document.createElement('dialog');
+  dlg.className = 'alt-dialog';
+  dlg.innerHTML = `
+    <header><div><small>${SLOT_LABEL[cur.s]}</small><h3>À la place de ${esc(cur.n)}</h3></div>
+      <button type="button" class="ghost" data-close>Fermer</button></header>
+    <p class="hint">Le reste du stuff est figé ; le nouvel item reprend la finition de l'ancien quand elle tient sur lui. Écart en dégâts moyens.</p>
+    <input type="search" class="alt-search" placeholder="Chercher un item…" aria-label="Chercher un item">
+    <ul class="alt-list"></ul>`;
+  const norm = t => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const fill = q => {
+    const rows = (q ? list.filter(a => norm(a.n).includes(norm(q))) : list).slice(0, ALT_SHOWN);
+    dlg.querySelector('.alt-list').innerHTML = rows.map(a => `
+      <li class="${a.current ? 'current' : ''}">
+        <img src="${ITEM_IMG(a.img)}" alt="" width="36" height="36" loading="lazy">
+        <div class="alt-name"><strong>${esc(a.n)}</strong><small>niv. ${a.l}${a.current ? ' · actuel' : a.worn ? ' · déjà porté' : ''}</small>
+          ${a.issues.length ? `<ul class="alt-issues">${a.issues.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>
+        <span class="alt-pct ${a.pct < -0.05 ? 'neg' : a.pct > 0.05 ? 'pos' : ''}">${a.current || a.worn ? '—' : `${a.pct >= 0 ? '+' : ''}${a.pct.toFixed(1)} %`}<small>${fmt(a.score)}</small></span>
+        <button type="button" class="ghost" data-place="${a.id}" ${a.current || a.worn ? 'disabled' : ''}>Mettre</button>
+      </li>`).join('') || '<li class="empty">Aucun item de cet emplacement ne correspond.</li>';
+  };
+  fill('');
+  dlg.querySelector('.alt-search').oninput = e => fill(e.target.value.trim());
+  dlg.querySelector('[data-close]').onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.onclick = e => {
+    if (e.target === dlg) { dlg.close(); return; }
+    const b = e.target.closest('[data-place]');
+    if (!b) return;
+    const { item, lost } = placeItem(game, lastResult, idx, game.items.find(g => g.id === Number(b.dataset.place)));
+    const items = lastResult.items.map((it, i) => (i === idx ? item : it));
+    const kept = (lastResult.lost || []).filter(l => l.id !== cur.id);
+    if (editing === idx) editing = null;
+    dlg.close();
+    applyItems(items, [...kept, ...lost.map(text => ({ id: item.id, text }))]);
+  };
+  document.body.append(dlg);
+  dlg.showModal();
+  dlg.querySelector('.alt-search').focus();
+}
+
 // ---------- Sauvegardes ----------
 // Stuffs générés gardés dans le navigateur (localStorage), avec un nom modifiable
 
@@ -443,7 +598,7 @@ function bindSaveBar() {
   $('#saveForm').onsubmit = e => {
     e.preventDefault();
     const name = $('#saveName').value.trim() || defaultName(lastResult);
-    const { savedName, draftName, ...result } = lastResult;
+    const { savedName, draftName, original, ...result } = lastResult;
     const list = loadSaved();
     list.unshift({ id: Date.now(), name, savedAt: new Date().toISOString(), result });
     if (!writeSaved(list)) { setStatus('Sauvegarde impossible : le stockage du navigateur est plein ou bloqué.', 'error'); return; }
@@ -469,6 +624,7 @@ function renderSaved() {
     if (!x) return;
     lastResult = { ...x.result, savedName: x.name };
     selectedTier = 0;
+    editing = null;
     selectedSpell = null;
     renderStuff();
     renderSim();
@@ -507,7 +663,7 @@ function renderStuff() {
   const tier = lastResult.tiers?.[selectedTier];
   const kept = new Set(tier?.kept || []);
   const badge = it => (tier && selectedTier ? `<span class="badge ${kept.has(it.id) ? 'kept' : 'new'}">${kept.has(it.id) ? 'Gardé' : 'Nouveau'}</span>` : '');
-  const items = [...r.items].sort((a, b) => SLOT_ORDER.indexOf(a.s) - SLOT_ORDER.indexOf(b.s));
+  const items = r.items.map((it, idx) => ({ ...it, idx })).sort((a, b) => SLOT_ORDER.indexOf(a.s) - SLOT_ORDER.indexOf(b.s));
   const passiveNotes = r.items.filter(i => i.passive && PASSIVES[i.passive]).map(i => {
     const p = game.passives[i.passive];
     return `<li><strong>${esc(i.n)}</strong> — ${esc(p?.d || '')}${PASSIVES[i.passive].note ? `<br><em>Hypothèse : ${esc(PASSIVES[i.passive].note)}</em>` : ''}</li>`;
@@ -529,6 +685,7 @@ function renderStuff() {
     </div>
     ${autoBanner()}
     ${critBanner(r)}
+    ${editBanner(r)}
     ${(r.exoNotes || []).length ? `<ul class="exo-notes">${r.exoNotes.map(n => `<li class="${n.used ? 'used' : 'skip'}">${esc(n.text)}</li>`).join('')}</ul>` : ''}
     <div class="items">
       ${items.map(it => `
@@ -537,7 +694,11 @@ function renderStuff() {
             <div><small>${SLOT_LABEL[it.s]} · niv. ${it.l}</small><h3>${esc(it.n)}</h3>${it.set ? `<small class="set">${esc(game.sets[it.set]?.n || '')}</small>` : ''}</div>
             ${badge(it)}
           </header>
-          ${itemSheet(it)}
+          ${editable() ? `<div class="item-actions">
+            <button type="button" class="ghost" data-alt="${it.idx}">Alternatives</button>
+            <button type="button" class="ghost" data-edit="${it.idx}" aria-pressed="${editing === it.idx}">${editing === it.idx ? 'Terminer' : 'Modifier'}</button>
+          </div>` : ''}
+          ${editing === it.idx ? itemEditor(it) : itemSheet(it)}
         </article>`).join('')}
     </div>
     ${r.setBonuses.length ? `<h2>Bonus de panoplie</h2><div class="sets">${r.setBonuses.map(b => `<div class="setbox"><strong>${esc(b.n)}</strong> (${b.count} items)<ul class="lines">${statLines(b.bonus)}</ul></div>`).join('')}</div>` : ''}
@@ -551,6 +712,7 @@ function renderStuff() {
     ${passiveNotes ? `<h2>Passifs pris en compte</h2><ul class="passives">${passiveNotes}</ul>` : ''}
   `;
   bindSaveBar();
+  bindEdits();
   $('#tab-stuff').querySelectorAll('[data-tierview]').forEach(b => b.onclick = () => {
     selectedTier = Number(b.dataset.tierview);
     selectedSpell = null;

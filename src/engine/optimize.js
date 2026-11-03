@@ -44,7 +44,7 @@ const PCT_KEYS = ['pctSorts', 'pctDist', 'pctMelee'];
 const EPS_RES = 1e-6; // départage : à dégâts égaux, préférer plus de résistances
 // Rés. moyenne : chaque élément compte au plus 50 %, au-delà c'est de la résistance gâchée
 const RES_CAP = 50;
-const resMoy = st => RES_KEYS.reduce((t, r) => t + Math.min(st[r] || 0, RES_CAP), 0) / 5;
+export const resMoy = st => RES_KEYS.reduce((t, r) => t + Math.min(st[r] || 0, RES_CAP), 0) / 5;
 
 // ---------- Préparation ----------
 
@@ -56,7 +56,7 @@ function relevantKeys(cfg) {
   return keys;
 }
 
-function passiveMatters(p) {
+export function passiveMatters(p) {
   const e = PASSIVES[p];
   if (!e) return false;
   const v = e.moyen;
@@ -142,6 +142,13 @@ export function prepare(game, cfg) {
     sets.push({ id: Number(id), n: s.n, items: idxs, bonus, maxK: idxs.length });
   }
 
+  return { ...problemBase(game, cfg), items, sets };
+}
+
+// Partie du problème qui ne dépend pas des items : sorts de référence, transcendances, critique visé.
+// Sert aussi à évaluer un stuff modifié à la main.
+export function problemBase(game, cfg) {
+  const keys = relevantKeys(cfg);
   const spells = classSpells(game, cfg.breedId, cfg.level);
   // sans sort de l'élément dans la classe, on prend un sort générique
   const generic = [{ id: 0, n: 25, c: 30, cc: 10, nLines: 1 }];
@@ -163,7 +170,7 @@ export function prepare(game, cfg) {
     return cc.length ? 100 - Math.min(...cc) : 0;
   }));
   return {
-    cfg, keys: [...keys], items, sets, refSpells, breed, runeWeight: w, trans, critTarget,
+    cfg, keys: [...keys], refSpells, breed, runeWeight: game.runeWeight, setsById: game.sets, trans, critTarget,
     base: baseStats(cfg.level), points: statPoints(cfg.level),
   };
 }
@@ -572,7 +579,7 @@ async function finishItems(solver, problem, sol, grad) {
 
 // Gain de dégâts de chaque option ajoutée seule au stuff final : % dommages, overs, transcendances.
 // Les overs sont comparés à poids égal (15, le poids d'1 % de dommages).
-function fmComparison(problem, stats, passives) {
+export function fmComparison(problem, stats, passives) {
   const ctx = ctxOf(problem, passives, true);
   const base = score(stats, ctx);
   const w = problem.runeWeight;
@@ -801,7 +808,7 @@ function improveFinishes(problem, best, finish, ctx) {
 
 // Pourquoi chaque exo PA / PM / PO coché est utilisé ou non. Un exo coché n'est jamais imposé :
 // le moteur ne le pose que s'il sert un minimum demandé ; sinon une autre finition rapporte plus.
-function exoNotes(cfg, stats, perItem) {
+export function exoNotes(cfg, stats, perItem) {
   const notes = [];
   if (cfg.gelanoPaPm) notes.push({ k: 'pm', used: true, text: 'Exo PM utilisé : imposé sur le Gelano PA PM.' });
   for (const k of SINGLE_EXO) {
@@ -857,9 +864,7 @@ export async function optimize(solver, game, config, onProgress = () => {}) {
 export function buildResult(cfg, chosen, runs, failed = null) {
   const { problem, final, stats, perItem, transPerItem, passives, ctx } = chosen;
 
-  const violations = Object.entries(cfg.min)
-    .filter(([k, v]) => (k === 'resMoy' ? resMoy(stats) : stats[k] || 0) < v - 1e-6)
-    .map(([k, v]) => ({ key: k, min: v, got: k === 'resMoy' ? resMoy(stats) : stats[k] }));
+  const violations = violationsOf(cfg, stats);
   const unmet = final.items.filter(it => !checkCriteria(it.crit, stats)).map(it => it.n);
 
   return {
@@ -887,6 +892,25 @@ export function buildResult(cfg, chosen, runs, failed = null) {
     unmetConditions: unmet,
     candidates: problem.items.length,
   };
+}
+
+// Minimums demandés non tenus
+export function violationsOf(cfg, stats) {
+  const got = k => (k === 'resMoy' ? resMoy(stats) : stats[k] || 0);
+  return Object.entries(cfg.min).filter(([k, v]) => got(k) < v - 1e-6).map(([k, v]) => ({ key: k, min: v, got: got(k) }));
+}
+
+// Refait seulement la forgemagie d'un stuff (items, jets et points de caractéristique figés),
+// dans le mode critique choisi à la génération
+export async function refinish(solver, game, r) {
+  const ids = new Set(r.items.map(it => it.id));
+  const cfg = { ...r.config, forced: [...new Set([...r.config.forced, ...ids])], banned: r.config.banned.filter(id => !ids.has(id)) };
+  const problem = prepare(game, cfg);
+  problem.mode = r.crit.mode;
+  const byId = new Map(problem.items.map(it => [it.id, it]));
+  const best = { items: r.items.map(it => ({ ...byId.get(it.id), st: it.st })), points: r.points };
+  const chosen = { mode: r.crit.mode, ...(await finalize(solver, problem, best)) };
+  return buildResult(r.config, chosen, r.crit.runs.map(x => ({ mode: x.mode, realScore: x.score })), r.crit.failed);
 }
 
 // Élément automatique : un calcul par élément (le neutre est exclu), on garde celui qui fait le plus

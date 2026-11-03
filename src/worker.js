@@ -1,6 +1,6 @@
 // Web Worker coordinateur : lance le moteur ; chaque session de résolution a son propre worker
 // solveur, si bien que les modes critique / sans critique tournent sur deux cœurs en parallèle.
-import { optimize, withAutoElement } from './engine/optimize.js';
+import { optimize, withAutoElement, refinish } from './engine/optimize.js';
 import { optimizeLeveling } from './engine/leveling.js';
 
 let game;
@@ -43,6 +43,14 @@ const solver = {
 
 self.onmessage = async ({ data }) => {
   if (data.type === 'game') { game = data.game; return; }
+  if (data.type === 'refinish') {
+    try {
+      self.postMessage({ type: 'refinished', result: await refinish(solver, game, data.result) });
+    } catch (e) {
+      self.postMessage({ type: 'error', message: e.message || String(e) });
+    }
+    return;
+  }
   try {
     const t0 = performance.now();
     const run = data.type === 'leveling' ? optimizeLeveling : optimize;

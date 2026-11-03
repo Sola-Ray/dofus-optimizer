@@ -15,7 +15,16 @@ Pour mettre à jour les données après un patch (environ 1 minute) :
 npm run data
 ```
 
-Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`, et `node test/run-leveling.mjs` pour le mode leveling.
+Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`, `node test/run-leveling.mjs` pour le mode leveling, et `node test/run-edit.mjs [emplacement]` pour les alternatives et le recalcul de la forgemagie.
+
+## Modifier un stuff généré
+
+En mode stuff, chaque item a deux boutons :
+
+- **Alternatives** : tous les items de l'emplacement, essayés un par un à la place de l'actuel, triés par dégâts avec l'écart en %. Le reste du stuff est figé (items, forgemagie, points de caractéristique). Le nouvel item reprend la finition de l'ancien quand elle tient sur lui. Les problèmes sont affichés sur chaque ligne : finition impossible, minimum non tenu, condition de port non remplie. Un item déjà porté ailleurs est rangé en bas.
+- **Modifier** : chaque ligne d'effet et de forgemagie devient un champ, pour taper son jet réel.
+
+Après une modification, un bandeau donne les dégâts face au stuff généré et liste les problèmes. **Recalculer la FM** refait seulement la forgemagie de tout le stuff, sans changer les items ni les points. **Revenir au stuff généré** annule tout. Un stuff modifié se sauvegarde comme un autre.
 
 ## Fiches sauvegardées
 
