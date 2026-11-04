@@ -789,17 +789,30 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   return finalize(solver, problem, best);
 }
 
-// Forgemagie exacte item par item, runes de transcendance, puis stats finales
+// Forgemagie exacte item par item, runes de transcendance, puis stats finales.
+// En multi-élément, la pente d'un seul élément met toute la forgemagie dans sa caractéristique
+// (les overs ne sont plus revus ensuite) : on essaie la pente de chaque élément et leur moyenne,
+// et on garde la forgemagie qui fait le plus de dégâts. Un seul élément : un seul essai, comme avant.
 export async function finalize(solver, problem, best) {
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
-  const grad = makeCuts(problem, bestStats, best)[0]?.g || {};
-  const finish = await finishItems(solver, problem, best, grad);
   const ctx = ctxOf(problem, passives, true);
-  const { perItem, transPerItem, fm } = improveFinishes(problem, best, finish, ctx);
-  const final = { ...best, fm, trans: {} };
-  const stats = solutionStats(problem, final);
-  return { problem, final, stats, perItem, transPerItem, passives, realScore: score(stats, ctx), ctx };
+  const grads = makeCuts(problem, bestStats, best).map(c => c.g);
+  if (grads.length > 1) {
+    const avg = {};
+    for (const g of grads) for (const [k, v] of Object.entries(g)) avg[k] = (avg[k] || 0) + v / grads.length;
+    grads.push(avg);
+  }
+  let out = null;
+  for (const grad of grads.length ? grads : [{}]) {
+    const finish = await finishItems(solver, problem, best, grad);
+    const { perItem, transPerItem, fm } = improveFinishes(problem, best, finish, ctx);
+    const final = { ...best, fm, trans: {} };
+    const stats = solutionStats(problem, final);
+    const realScore = score(stats, ctx);
+    if (!out || realScore > out.realScore) out = { problem, final, stats, perItem, transPerItem, passives, realScore, ctx };
+  }
+  return out;
 }
 
 // Les finitions sont choisies avec une pente figée, ce qui met toute la même ligne partout
