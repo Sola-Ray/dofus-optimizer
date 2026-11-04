@@ -318,6 +318,14 @@ export function buildSections(problem, cuts) {
     for (let n = 0; n <= s.maxK; n++) { one += ` + y${s.id}_${n}`; if (n) cnt += term(n, `y${s.id}_${n}`); binaries.push(`y${s.id}_${n}`); }
     rows.push(`${one} = 1`);
     rows.push(`${cnt}${s.items.map(i => ` - x${i}`).join('')} = 0`);
+    // Inégalités valides (mêmes solutions entières) : un bonus à 2 items ou plus demande un autre
+    // item de la panoplie que j. Sans elles, la relaxation continue mélange « 0 item » et « 2 items »
+    // pour toucher la moitié du bonus avec un seul item porté. Pas dans le modèle commun du mode
+    // leveling (problem.tight absent) : mesuré sans gain, le MIP commun y est surtout de la recherche.
+    if (problem.tight) {
+      const ge2 = Array.from({ length: s.maxK - 1 }, (_, n) => ` + y${s.id}_${n + 2}`).join('');
+      for (const j of s.items) rows.push(` setj${s.id}_${j}:${ge2}${s.items.filter(i => i !== j).map(i => ` - x${i}`).join('')} <= 0`);
+    }
   }
 
   // Points de caractéristique
@@ -762,6 +770,7 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   const full = prepare(game, cfg);
   full.setsById = game.sets;
   full.mode = mode;
+  full.tight = true; // formulation renforcée (voir buildSections)
   const startStats = startStatsOf(full);
 
   // Phase 1 : items élagués. Phase 2 : tous les items, en partant de la solution de la phase 1.
