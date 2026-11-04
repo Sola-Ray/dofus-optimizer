@@ -11,7 +11,7 @@
 // Une fonction reçoit les stats du perso (s) quand l'effet en dépend.
 // def : réduction moyenne des dégâts subis (affichage seulement).
 
-import { PA_CAP } from './rules.js';
+import { PA_CAP, STAT_CAP } from './rules.js';
 
 const ELEMENT_STAT = { feu: 'intel', eau: 'chance', terre: 'force', air: 'agi', neutre: 'force' };
 
@@ -77,8 +77,8 @@ export const PASSIVES = {
     moyen: { finaux: 4 }, burst: {},
   },
   28516: { // Sylvestre : +8 Puissance par PM utilisé, 2 tours (les PM de ce tour et du précédent cumulent)
-    moyen: s => ({ puissance: 8 * (s.pm || 0) }), // la moitié de ses PM utilisés à chaque tour
-    burst: s => ({ puissance: 16 * (s.pm || 0) }), // tous ses PM utilisés ce tour et le précédent
+    moyen: s => ({ puissance: 8 * Math.min(STAT_CAP.pm, s.pm || 0) }), // la moitié de ses PM utilisés à chaque tour
+    burst: s => ({ puissance: 16 * Math.min(STAT_CAP.pm, s.pm || 0) }), // tous ses PM utilisés ce tour et le précédent
     note: 'Combat moyen : tu utilises la moitié de tes PM à chaque tour (6 PM = +48 Puissance). '
       + 'Burst : tous tes PM ce tour et le précédent (6 PM = +96 Puissance). Le soin de 8 % n\'est pas compté.',
   },
@@ -159,7 +159,7 @@ export const PASSIVES = {
 const TOUR1 = {
   5952: s => ({ finaux: critChance(s) }), // Turquoise : les critiques du tour profitent aux sorts suivants
   5454: { finaux: 20 }, // Nébuleux : tour impair
-  28516: s => ({ puissance: 8 * (s.pm || 0) }), // Sylvestre : tous les PM de ce tour seulement
+  28516: s => ({ puissance: 8 * Math.min(STAT_CAP.pm, s.pm || 0) }), // Sylvestre : tous les PM de ce tour seulement
   14908: { crit: 100 }, // Surpryz
   14913: { finaux: 10 }, // Prynyang
   14903: s => perTurn(s, 1, -10), 14904: s => perTurn(s, 2, -35), 14905: s => perTurn(s, 3, -50), // Pryssion

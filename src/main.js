@@ -5,7 +5,7 @@ import { simulateSpell, classSpells, passivePoison } from './engine/damage.js';
 import { turnDamage, equippedWeapon } from './engine/rotation.js';
 import { PASSIVES } from './engine/passives.js';
 import { evaluateStuff, placeItem, alternatives } from './engine/edit.js';
-import { STAT_LABEL, ELEMENTS } from './engine/rules.js';
+import { STAT_LABEL, ELEMENTS, STAT_CAP } from './engine/rules.js';
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -140,7 +140,7 @@ function renderConfig() {
     ${lv ? levelingSection() : `<section>
       <h2>Minimums à respecter</h2>
       <div class="grid2">
-        ${MIN_FIELDS.map(([k, l]) => `<label class="field small">${l}<input type="number" min="0" data-min="${k}" value="${config.min[k] ?? ''}" placeholder="—"></label>`).join('')}
+        ${MIN_FIELDS.map(([k, l]) => `<label class="field small">${l}<input type="number" min="0"${STAT_CAP[k] ? ` max="${STAT_CAP[k]}"` : ''} data-min="${k}" value="${config.min[k] ?? ''}" placeholder="—"></label>`).join('')}
       </div>
     </section>`}
     ${lv && !config.leveling.fm ? '' : `<section>
@@ -231,7 +231,12 @@ function onConfigChange(e) {
   }
   else if (t.dataset.min) {
     if (t.value === '') delete config.min[t.dataset.min];
-    else config.min[t.dataset.min] = Number(t.value);
+    else {
+      // 12 PA, 6 PM, 6 PO au plus en début de combat
+      const cap = STAT_CAP[t.dataset.min];
+      config.min[t.dataset.min] = cap ? Math.min(cap, Number(t.value)) : Number(t.value);
+      if (cap && Number(t.value) > cap) t.value = cap;
+    }
   } else if (t.id === 'level') {
     config.level = Math.min(200, Math.max(1, Number(t.value) || 200));
     t.value = config.level;

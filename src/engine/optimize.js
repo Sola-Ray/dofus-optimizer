@@ -6,7 +6,7 @@
 // tangente au point trouvé, ce qui resserre la borne jusqu'à converger.
 import {
   baseStats, statPoints, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
-  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, PA_CAP, lineCap, pointSegments,
+  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, PA_CAP, STAT_CAP, lineCap, pointSegments,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
 import { classSpells, elementSpells, score, elementScores, paFactor, SPELL_RULES } from './damage.js';
@@ -1056,6 +1056,8 @@ export function normalizeConfig(game, config) {
   if (!cfg.fm.pctExoOn) cfg.fm.pctExo = 0;
   if (!cfg.fm.overOn) cfg.fm.overBudget = 0;
   if (!cfg.elements.length) throw new Error('Choisis au moins un élément.');
+  // minimums au-delà du plafond du jeu (12 PA, 6 PM, 6 PO) : ramenés au plafond
+  for (const [k, cap] of Object.entries(STAT_CAP)) if (cfg.min[k] > cap) cfg.min[k] = cap;
   // sorts cochés : rangés par classe dans l'interface
   if (config.spellsByBreed) cfg.spells = config.spellsByBreed[cfg.breedId] || [];
   if (cfg.gelanoPaPm) {

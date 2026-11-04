@@ -11,6 +11,8 @@ export const BASE = { pa: 7, pm: 3, invo: 1, vita: 50 + 5 * (LEVEL - 1), pods: 1
 export const baseStats = level => ({ ...BASE, pa: level >= 100 ? 7 : 6, vita: 50 + 5 * (Math.min(level, LEVEL) - 1) });
 // PA en début de combat plafonnés à 12 : au-delà, seuls les PA gagnés en combat (Ocre, légendaires…) comptent
 export const PA_CAP = 12;
+// Plafonds en début de combat (PA, PM, PO) : un minimum demandé au-delà ne sert à rien, il est ramené au plafond
+export const STAT_CAP = { pa: PA_CAP, pm: 6, po: 6 };
 
 export const ELEMENTS = ['feu', 'eau', 'terre', 'air', 'neutre'];
 export const ELEMENT_STAT = { feu: 'intel', eau: 'chance', terre: 'force', air: 'agi', neutre: 'force' };
