@@ -7,6 +7,8 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 - `npm run dev` : appli locale (Vite, port 5173).
 - `npm run data` : retélécharge DofusDB (`data/raw/`, non versionné) puis reconstruit `public/game.json` et `public/icons/`.
 - `node test/run-leveling.mjs '<config json>'` : mode leveling en ligne de commande (Eni feu, paliers par défaut). Exemple : `'{"leveling":{"keepGain":5}}'`.
+- `npm test` : tests (`test/*.test.mjs`, ~15 s) : stats et jets de sorts face à DofusBook, formule, lignes de dégâts, paliers de panoplie, optimiseur face à un stuff Huzounet avec score figé (`SNAPSHOT`, à mettre à jour quand le modèle change exprès).
+- `node test/compare-huzounet.mjs [--shard k/N] [--out f.jsonl] [--eval] [--no-vita]` : les 117 stuffs Huzounet à un ou deux éléments évalués par le moteur, puis l'optimiseur sous leurs minimums (PA, PM, PO, rés. moyenne, vitalité) et la même forgemagie (exos PA / PM / PO). ~1 min par stuff : lancer 16 shards en parallèle.
 - `node test/run-eni.mjs [auto|crit|noncrit] '<config json>'` : lance le moteur en ligne de commande (Eniripsa feu, 12 PA / 6 PM par défaut). Exemple : `'{"fm":{"pctExo":2},"min":{"pa":12,"pm":6,"po":6,"resMoy":25}}'`.
 
 ## Sources de données Dofus 3
@@ -14,6 +16,7 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 - **DofusDB** (`https://api.dofusdb.fr`) : source utilisée. CORS ouvert, pages de 50 résultats maximum, filtres type `typeId[$in][]=…`. Collections utiles : `items`, `item-sets`, `item-types`, `effects` (dont `effectPowerRate` = poids des runes), `characteristics` (dont `asset` = icône), `breeds`, `spell-variants`, `spells`, `spell-levels`. Icônes : `https://dofusdb.fr/icons/characteristics/<asset>.png` (pas d'icône pour les résistances ni les % dommages).
 - **dofusdude** (`https://api.dofusdu.de/dofus3/v1/…`) : couvre aussi Dofus 3 en français ; `ankama_id` = id officiel.
 - **DofusBook** : `curl` renvoie 403 (Cloudflare), mais depuis un navigateur `fetch('/api/stuffs/dofus/public/<id>')` donne un stuff complet en JSON ; chaque item a `official` = id Ankama. Les liens courts `d-bk.net/fr/d/<code>` redirigent vers l'id. Utile pour valider la formule de dégâts.
+- **Huzounet** (`https://huzounet.fr/api/equipments/search?budget=high|legendary&page=n`) : stuffs de référence par classe et élément, avec leur lien DofusBook. Le code court `d-bk.net/fr/d/<code>` est l'id DofusBook en base 62 (alphabet `0-9A-Za-z`), donc pas besoin de suivre la redirection. Export dans `data/huzounet/stuffs.json` (2026-11). Dans l'API DofusBook : `fmGlobal` = exos PA / PM / PO globaux, `fmItems` = valeur finale de la ligne (pas un ajout), `stuffCarac.base_*` = points investis. Stats de la page objets et jets de l'onglet Sorts (« effets calculés ») : lus au navigateur, figés dans `test/fixtures/`.
 - **Prix HDV** : aucune API publique. Meilleure source trouvée : KamaMaster (prix par serveur, appli rendue côté client, à lire via navigateur).
 - Aucune API Ankama pour l'inventaire ; lire le trafic du client = risque de ban, à exclure.
 
@@ -32,6 +35,9 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 - **Masque de cibles** (`targetMask`) : sens des lettres documenté en tête de `buffs.js` (lu dans le client Dofus 2 décompilé, vérifié sur des sorts). Piège : le script d'un sort peut réserver un effet à un cas que le masque ne dit pas (Vacarme : +25 % finaux en zone « toute la carte » pour les Feux Follets seulement).
 - **Lignes conditionnelles** : `c` (forClientOnly) = ligne d'affichage, souvent jouée par un sous-sort sous condition (retrait de PA, poussée…) ; `p` = ligne aléatoire (une seule des lignes tirées part) ; masques en majuscule `V50` / `PB` / `R` et `*EN` face à `*eN` = variante qui demande une mise en place. Effets 2828 (vol meilleur élément) et 2832 (pire élément) : à mapper, sinon Folie Sanguinaire ou Kyrja comptent 0. Le détail est en tête de `directLines`.
 - **Lignes de dégâts en double** : beaucoup de sorts répètent une ligne (variante en zone, variante par état du lanceur, ligne réservée aux invocations ou à un état de la cible). `directLines` dans `damage.js` ne garde que ce qui frappe un ennemi ordinaire lors d'un lancer direct ; sans ça Vacarme comptait double et Flèche Dévorante 7 fois. Même ligne dans la même zone = vrai second coup (Dagues Boomerang). Les poisons comptent pour un déclenchement. Sorts à cumul (Torrent Arcanique) : `SPELL_RULES`.
+
+- **Conditions de port après la forgemagie** : `finishItems` refait la FM hors du modèle principal, avec un petit bonus (1e-4) sur toute finition ; sans les conditions de port dans son LP, il posait un exo PM « gratuit » qui cassait la Ceintacé (PA < 12 ou PM < 6). Tout nouveau passage qui modifie les stats après le MIP doit revérifier `checkCriteria`.
+- **Écarts avec Huzounet** (`data/huzounet/compare.csv`) : faibles pour Iop, Crâ, Ecaflip, Forgelance (~+11 %), forts pour Féca, Huppermage, Zobal, Xélor, Osamodas, Sadida (+30 à +54 %), y compris en se limitant aux stuffs sans critique : ce sont les dégâts non modélisés (invocations, glyphes, états), pas une surévaluation du critique.
 
 ## Règles validées avec le joueur
 

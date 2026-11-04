@@ -15,7 +15,7 @@ Pour mettre à jour les données après un patch (environ 1 minute) :
 npm run data
 ```
 
-Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`, `node test/run-leveling.mjs` pour le mode leveling, et `node test/run-edit.mjs [emplacement]` pour les alternatives et le recalcul de la forgemagie.
+Tests : `npm test` (voir Validation). Test rapide du moteur en ligne de commande : `node test/run-eni.mjs`, `node test/run-leveling.mjs` pour le mode leveling, et `node test/run-edit.mjs [emplacement]` pour les alternatives et le recalcul de la forgemagie.
 
 ## Modifier un stuff généré
 
@@ -75,4 +75,16 @@ Par défaut : sans critique, sans forgemagie ni transcendance, parchemins régla
 
 - **Passifs** des Dofus, prysmaradites et légendaires : traduits à la main dans `src/engine/passives.js`, en trois scénarios (combat moyen sur 5 tours, tour 1, tour de burst). Les PA gagnés en combat (Ocre, Prycipithon, Ganymède…) comptent comme des dégâts en plus sur le tour. Les poisons des passifs (Ébène, Pestilence) profitent de la caractéristique, de la Puissance et des dommages finaux, et sont répartis sur les sorts du tour. Les passifs sans effet sur les dégâts (boucliers, soins, résistances, placement) sont affichés comme tels. Chaque hypothèse est affichée sous le stuff.
 - **Sorts** : seuls les effets directs de dégâts, de vol de vie et de soin sont simulés. Les effets déclenchés par un autre sort, les glyphes, les poisons et les états ne le sont pas.
-- **Taux de réussite de la forgemagie** : Ankama ne publie pas de formule. Le modèle « une finition par item » et les budgets d'over viennent de guides communautaires (Gamosaurus, Huzounet, Papycha, Tofus). La place exacte des % sorts / distance avant les résistances reste à confirmer en jeu.
+- **Taux de réussite de la forgemagie** : Ankama ne publie pas de formule. Le modèle « une finition par item » et les budgets d'over viennent de guides communautaires (Gamosaurus, Huzounet, Papycha, Tofus). % sorts et % distance se multiplient comme dans DofusBook (vérifié sur ses jets, voir Validation) ; leur place avant les résistances de la cible reste à confirmer en jeu.
+- **Classes à mécaniques** : les invocations, glyphes, états et poisons de sort ne comptent pas. Pour Féca, Huppermage, Zobal, Xélor, Osamodas et Sadida, les écarts avec les stuffs de Huzounet sont les plus grands (+30 à +54 %) : ces stuffs servent aussi des dégâts que le moteur ne voit pas. Les dégâts affichés sont moins sûrs pour ces classes.
+
+## Validation
+
+`npm test` (une quinzaine de secondes, lancé aussi par GitHub Actions avant chaque déploiement) :
+
+- **Stats** : 9 stuffs de Huzounet (classes, budgets et éléments variés) donnent exactement les 32 stats affichées par DofusBook (caractéristiques, dommages, résistances, critique, PA / PM / PO).
+- **Jets de sorts** : les 26 sorts sans cumul relevés sur DofusBook (Iop terre légendaire avec % sorts, % distance et Dommages critiques négatifs ; Eniripsa feu) donnent les mêmes jets normaux et critiques.
+- **Optimiseur** : sur un stuff de Huzounet, le moteur fait au moins autant de dégâts sous les mêmes contraintes, avec un score figé pour repérer une régression.
+- Formule calculée à la main, lignes de dégâts gardées (Vacarme, Flèche Dévorante, Dagues Boomerang), paliers de panoplie, conditions de port après la forgemagie.
+
+`node test/compare-huzounet.mjs` compare le moteur aux 117 stuffs de Huzounet à un ou deux éléments (budgets prestige et légendaire, novembre 2026), sous leurs minimums (PA, PM, PO, résistance moyenne, vitalité) et avec la même forgemagie (exos PA / PM / PO). Le moteur fait au moins autant sur les 117 : +20 % de dégâts en médiane d'après son propre modèle, +10 % face aux stuffs critiques de Huzounet, +2 % au plus près (Iop terre, Crâ eau, Sacrieur eau). Résultats dans `data/huzounet/compare.csv`. Ce gain est mesuré par le modèle du moteur : il montre que le solveur trouve bien l'optimum de son modèle, pas que les stuffs font ces dégâts en jeu.

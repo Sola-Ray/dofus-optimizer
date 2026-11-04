@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "data": "node scripts/fetch-data.mjs && node scripts/build-data.mjs",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
     "vite": "^8.3.5"

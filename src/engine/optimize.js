@@ -655,6 +655,28 @@ async function finishItems(solver, problem, sol, grad) {
   }
   if (!bins.length) return { perItem: {}, transPerItem: {}, fm: {} };
 
+  // Conditions de port des items portés : la forgemagie ne doit pas les casser (exo PM sur un stuff
+  // qui porte une Ceintacé, « PA < 12 ou PM < 6 »). Un groupe ET par binaire, au moins un vrai (big-M).
+  for (const it of sol.items) {
+    const groups = it.crit;
+    if (!groups || !groups.some(atoms => atoms.some(a => contrib[a.key]))) continue;
+    const holds = a => { const v = base[a.key] || 0; return (a.min === undefined || v >= a.min) && (a.max === undefined || v <= a.max); };
+    const gv = [];
+    groups.forEach((atoms, g) => {
+      if (atoms.some(a => !contrib[a.key] && !holds(a))) return; // groupe faux quelle que soit la forgemagie
+      const z = `cw${it.idx}_${g}`;
+      gv.push(z); bins.push(z);
+      for (const a of atoms.filter(x => contrib[x.key])) {
+        const s = contrib[a.key].map(([c, x]) => term(c, x)).join('');
+        const M = 1000 + contrib[a.key].reduce((t, [c]) => t + Math.abs(c), 0);
+        const b = base[a.key] || 0;
+        if (a.min !== undefined) rows.push(` cwn${it.idx}_${g}_${a.key}:${s} - ${M} ${z} >= ${num(a.min - b - M)}`);
+        if (a.max !== undefined) rows.push(` cwx${it.idx}_${g}_${a.key}:${s} + ${M} ${z} <= ${num(a.max - b + M)}`);
+      }
+    });
+    if (gv.length) rows.push(` cw${it.idx}:${gv.map(v => ` + ${v}`).join('')} >= 1`);
+  }
+
   const build = withMins => ['Maximize', obj, 'Subject To', ...rows, ...(withMins ? minRows : []),
     ...(rows.length || minRows.length ? [] : [' dummy: 0 x0 >= 0']),
     'Bounds', ...bounds, ...(withMins ? minBounds : []), ...(gens.length ? ['General', ' ' + gens.join(' ')] : []), 'Binary', ' ' + bins.join(' '), 'End'].join('\n');
@@ -984,7 +1006,8 @@ function improveFinishes(problem, best, finish, ctx) {
   };
   const mins = { ...cfg.min };
   if (problem.mode === 'crit' && problem.critTarget > 0) mins.crit = Math.max(mins.crit || 0, problem.critTarget);
-  const ok = st => Object.entries(mins).every(([k, v]) => (k === 'resMoy' ? resMoy(st) : st[k] || 0) >= v - 1e-6);
+  const ok = st => Object.entries(mins).every(([k, v]) => (k === 'resMoy' ? resMoy(st) : st[k] || 0) >= v - 1e-6)
+    && best.items.every(it => checkCriteria(it.crit, st));
   const evaluate = () => {
     const st = solutionStats(problem, { ...best, fm: totals(), trans: {} });
     return ok(st) ? score(st, ctx) : -Infinity;

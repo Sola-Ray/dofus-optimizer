@@ -1,0 +1,350 @@
+{
+ "note": "Jets affichés par DofusBook (onglet Sorts, effets calculés, distance, cible sans résistance), premier coup sur un ennemi, sans cumul.",
+ "stuffs": {
+  "1aBsR": {
+   "13106": {
+    "n": "Pression",
+    "normal": [
+     650,
+     732
+    ],
+    "crit": [
+     728,
+     831
+    ]
+   },
+   "13108": {
+    "n": "Intimidation",
+    "normal": [
+     280,
+     321
+    ],
+    "crit": [
+     317,
+     358
+    ]
+   },
+   "13110": {
+    "n": "Épée Divine",
+    "normal": [
+     203,
+     234
+    ],
+    "crit": [
+     217,
+     257
+    ]
+   },
+   "13111": {
+    "n": "Épée du Destin",
+    "normal": [
+     312,
+     344
+    ],
+    "crit": [
+     351,
+     383
+    ]
+   },
+   "13115": {
+    "n": "Couperet",
+    "normal": [
+     234,
+     265
+    ],
+    "crit": [
+     257,
+     288
+    ]
+   },
+   "13116": {
+    "n": "Souffle",
+    "normal": [
+     116,
+     131
+    ],
+    "crit": [
+     116,
+     131
+    ]
+   },
+   "13117": {
+    "n": "Épée du Jugement",
+    "normal": [
+     257,
+     288
+    ],
+    "crit": [
+     280,
+     320
+    ]
+   },
+   "13119": {
+    "n": "Épée Destructrice",
+    "normal": [
+     265,
+     297
+    ],
+    "crit": [
+     288,
+     327
+    ]
+   },
+   "13121": {
+    "n": "Tempête de Puissance",
+    "normal": [
+     225,
+     250
+    ],
+    "crit": [
+     241,
+     264
+    ]
+   },
+   "13122": {
+    "n": "Épée Céleste",
+    "normal": [
+     297,
+     328
+    ],
+    "crit": [
+     327,
+     367
+    ]
+   },
+   "13123": {
+    "n": "Concentration",
+    "normal": [
+     526,
+     609
+    ],
+    "crit": [
+     605,
+     708
+    ]
+   },
+   "13124": {
+    "n": "Colère de Iop",
+    "normal": [
+     1778,
+     2169
+    ],
+    "crit": [
+     2287,
+     2759
+    ]
+   },
+   "13125": {
+    "n": "Épée de Iop",
+    "normal": [
+     876,
+     958
+    ],
+    "crit": [
+     995,
+     1098
+    ]
+   },
+   "13126": {
+    "n": "Déferlement",
+    "normal": [
+     312,
+     344
+    ],
+    "crit": [
+     351,
+     383
+    ]
+   },
+   "13130": {
+    "n": "Menace",
+    "normal": [
+     218,
+     234
+    ],
+    "crit": [
+     233,
+     257
+    ]
+   },
+   "13131": {
+    "n": "Tannée",
+    "normal": [
+     225,
+     250
+    ],
+    "crit": [
+     241,
+     273
+    ]
+   },
+   "13133": {
+    "n": "Endurance",
+    "normal": [
+     250,
+     281
+    ],
+    "crit": [
+     273,
+     311
+    ]
+   },
+   "13134": {
+    "n": "Fendoir",
+    "normal": [
+     383,
+     430
+    ],
+    "crit": [
+     430,
+     493
+    ]
+   },
+   "13135": {
+    "n": "Anneau Destructeur",
+    "normal": [
+     203,
+     234
+    ],
+    "crit": [
+     217,
+     257
+    ]
+   },
+   "13136": {
+    "n": "Rassemblement",
+    "normal": [
+     187,
+     210
+    ],
+    "crit": [
+     194,
+     225
+    ]
+   },
+   "13138": {
+    "n": "Accumulation",
+    "normal": [
+     567,
+     650
+    ],
+    "crit": [
+     625,
+     728
+    ]
+   },
+   "13139": {
+    "n": "Fracture",
+    "normal": [
+     265,
+     297
+    ],
+    "crit": [
+     288,
+     327
+    ]
+   },
+   "13144": {
+    "n": "Tumulte",
+    "normal": [
+     163,
+     178
+    ],
+    "crit": [
+     170,
+     186
+    ]
+   },
+   "13145": {
+    "n": "Zénith",
+    "normal": [
+     225,
+     241
+    ],
+    "crit": [
+     233,
+     264
+    ]
+   },
+   "13146": {
+    "n": "Pugilat",
+    "normal": [
+     300,
+     341
+    ],
+    "crit": [
+     338,
+     379
+    ]
+   },
+   "13147": {
+    "n": "Sentence",
+    "normal": [
+     116,
+     140
+    ],
+    "crit": [
+     123,
+     147
+    ]
+   },
+   "13156": {
+    "n": "Fureur",
+    "normal": [
+     691,
+     773
+    ],
+    "crit": [
+     790,
+     872
+    ]
+   },
+   "14676": {
+    "n": "Ferveur",
+    "normal": [
+     140,
+     163
+    ],
+    "crit": [
+     147,
+     170
+    ]
+   },
+   "14818": {
+    "n": "Fustigation",
+    "normal": [
+     234,
+     257
+    ],
+    "crit": [
+     257,
+     280
+    ]
+   }
+  },
+  "15Y7N": {
+   "25856": {
+    "n": "Vacarme",
+    "normal": [
+     555,
+     609
+    ],
+    "crit": [
+     692,
+     746
+    ]
+   },
+   "25871": {
+    "n": "Lamentations",
+    "normal": [
+     81,
+     89
+    ],
+    "crit": [
+     145,
+     153
+    ]
+   }
+  }
+ }
+}
