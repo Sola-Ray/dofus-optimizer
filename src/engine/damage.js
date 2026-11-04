@@ -226,7 +226,7 @@ export function poisonDamage(el, s, mods) {
 // Objectif du moteur : pour chaque élément joué, moyenne des dégâts attendus de ses sorts ;
 // on maximise l'élément le plus faible (équilibre en multi-élément).
 export function elementScores(stats, ctx) {
-  const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements, paCurve: ctx.paCurve }, ctx.passives || [], ctx.scenario);
+  const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements, paCurve: ctx.paCurve, play: ctx.play, attack: ctx.attack }, ctx.passives || [], ctx.scenario);
   if (ctx.ignoreCrit) s.crit = 0; // mode « sans critique » : seul le critique de base des sorts compte
   const mult = multipliers(s, mods, ctx.attack);
   const out = {};
@@ -245,7 +245,7 @@ export function elementScores(stats, ctx) {
 
 // Dégâts de poison des passifs sur un tour, dans le meilleur élément joué (onglet Simulation)
 export function passivePoison(stats, ctx) {
-  const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements, paCurve: ctx.paCurve }, ctx.passives || [], ctx.scenario);
+  const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements, paCurve: ctx.paCurve, play: ctx.play, attack: ctx.attack }, ctx.passives || [], ctx.scenario);
   return Math.max(0, ...ctx.elements.map(el => poisonDamage(el, s, mods)));
 }
 
@@ -273,7 +273,7 @@ function healValue(roll, el, stats) {
 
 // Simulation d'un sort : lignes normales et critiques, min-max contre la cible
 export function simulateSpell(spell, stats, ctx, target) {
-  const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements, paCurve: ctx.paCurve }, ctx.passives || [], ctx.scenario);
+  const { stats: s, mods } = applyPassives({ ...stats, elements: ctx.elements, paCurve: ctx.paCurve, play: ctx.play, attack: ctx.attack }, ctx.passives || [], ctx.scenario);
   const mult = multipliers(s, mods, ctx.attack) * (1 + (target.pctSubis || 0) / 100);
   const best = ctx.elements.reduce((b, el) => (s[ELEMENT_STAT[el]] || 0) > (s[ELEMENT_STAT[b]] || 0) ? el : b, ctx.elements[0] || 'feu');
   const rows = { normal: [], crit: [] };

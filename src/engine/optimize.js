@@ -193,7 +193,7 @@ export function pickSpells(game, cfg) {
     refSpells[el] = list.length ? list : generic;
     spellPicks[el] = { mode: list.length ? mode : 'générique', spells: list.map(sp => ({ id: sp.id, n: spells.find(x => x.id === sp.id)?.n || '', w: sp.w })) };
   }
-  const out = { refSpells, spellPicks, paCurve: paCurveOf(cfg.spells?.length ? spells.filter(sp => chosen.has(sp.id)) : played, stats, cfg) };
+  const out = { refSpells, spellPicks, paCurve: paCurveOf(cfg.spells?.length ? spells.filter(sp => chosen.has(sp.id)) : played, stats, cfg), play: playOf(game, spells, refSpells) };
   pickCache.set(key, out);
   return out;
 }
@@ -214,11 +214,29 @@ function paCurveOf(spells, stats, cfg) {
   return dmg.map(d => d / dmg[ref]);
 }
 
+// Façon de jouer des sorts de référence, pondérée par leurs lancers (passifs comme l'Ébène) :
+//   aoe : part des lancers en zone (un groupe DofusBook « Ennemi » qui n'est pas une case, champ zb)
+//   contact : part des lancers possibles au contact (portée minimale ≤ 1)
+//   ranged : part des lancers possibles à distance (portée maximale ≥ 2)
+function playOf(game, spells, refSpells) {
+  let w = 0, aoe = 0, contact = 0, ranged = 0;
+  for (const list of Object.values(refSpells)) for (const sp of list) {
+    const raw = spells.find(x => x.id === sp.id);
+    if (!raw) continue;
+    const n = sp.w ?? 1;
+    w += n;
+    if ((game.spells[sp.id]?.zb || []).some(([, zone]) => zone !== 'case')) aoe += n;
+    if ((raw.po?.[0] ?? 1) <= 1) contact += n;
+    if ((raw.po?.[1] ?? 1) >= 2) ranged += n;
+  }
+  return w ? { aoe: aoe / w, contact: contact / w, ranged: ranged / w } : null;
+}
+
 // Partie du problème qui ne dépend pas des items : sorts de référence, transcendances, critique visé.
 // Sert aussi à évaluer un stuff modifié à la main.
 export function problemBase(game, cfg) {
   const keys = relevantKeys(cfg);
-  const { refSpells, spellPicks, paCurve } = pickSpells(game, cfg);
+  const { refSpells, spellPicks, paCurve, play } = pickSpells(game, cfg);
   const breed = game.breeds.find(b => b.id === cfg.breedId);
 
   // Meilleure rune de transcendance par stat utile
@@ -233,7 +251,7 @@ export function problemBase(game, cfg) {
     return cc.length ? 100 - Math.min(...cc) : 0;
   }));
   return {
-    cfg, keys: [...keys], refSpells, spellPicks, paCurve, breed, runeWeight: game.runeWeight, setsById: game.sets, trans, critTarget,
+    cfg, keys: [...keys], refSpells, spellPicks, paCurve, play, breed, runeWeight: game.runeWeight, setsById: game.sets, trans, critTarget,
     base: baseStats(cfg.level), points: statPoints(cfg.level),
   };
 }
@@ -272,7 +290,7 @@ export function ctxOf(problem, passives, real = false) {
   const { cfg } = problem;
   return {
     elements: cfg.elements, attack: cfg.attack, scenario: cfg.scenario, refSpells: problem.refSpells, passives,
-    paCurve: problem.paCurve, ignoreCrit: !real && problem.mode === 'noncrit',
+    paCurve: problem.paCurve, play: problem.play, ignoreCrit: !real && problem.mode === 'noncrit',
   };
 }
 

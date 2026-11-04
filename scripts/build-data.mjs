@@ -121,8 +121,10 @@ const usedSets = new Set(outItems.map(i => i.set).filter(Boolean));
 const outSets = {};
 for (const s of sets) {
   if (!usedSets.has(s.id)) continue;
-  // effects[k] = bonus quand k objets de la panoplie sont portés
-  const bonus = (s.effects || []).map(list => {
+  // DofusDB : effects[k] = bonus quand k + 1 objets sont portés (effects[0] = 1 objet, vide).
+  // Le moteur lit b[n] pour n objets : on décale d'un cran (b[0] = aucun objet).
+  // Exemple : Katcheur, 3 objets, effects = [{}, bonus à 2, bonus à 3 (+1 PA)].
+  const bonus = [[], ...(s.effects || [])].map(list => {
     const b = {};
     for (const e of list || []) {
       const r = statOf(e.effectId, e.from, e.to);
@@ -199,6 +201,27 @@ for (const b of breeds) {
     },
     variants: pairs.filter(p => p.every(id => outSpells[id])),
   });
+}
+
+// Zones des sorts d'après DofusBook (data/dofusbook-spells.json, exporté à la main depuis un
+// navigateur : https://www.dofusbook.net/api/spells/class/<id>, Cloudflare bloque curl). Plus lisible
+// que zoneDescr : un groupe par cible et par cas (« Ennemi », « Lanceur sous Mot de Feu »,
+// « 1 charge »…). zb = groupes du dernier grade qui frappent un ennemi : [titre, zone, taille].
+// Exemple : Vacarme a [Ennemi, case, 1] et [Ennemi, cercle, 2] (la zone, lancé sur un Feu Follet).
+const DB_DAMAGE = /^[dv](n|t|f|e|a|me|pe)$/;
+try {
+  const db = JSON.parse(await readFile(new URL('../data/dofusbook-spells.json', import.meta.url), 'utf8'));
+  for (const list of Object.values(db.classes)) for (const s of list) {
+    const out = outSpells[s.id];
+    if (!out) continue;
+    const top = Math.max(...s.g.map(g => g[0]));
+    const zb = s.g.filter(g => g[0] === top && /Ennemi/.test(g[1]) && g[4].split(',').some(e => DB_DAMAGE.test(e)))
+      .map(g => [g[1], g[2], g[3]]);
+    if (zb.length) out.zb = zb;
+  }
+} catch (e) {
+  if (e.code !== 'ENOENT') throw e;
+  console.warn('data/dofusbook-spells.json absent : zones des sorts non renseignées');
 }
 
 const passives = {};

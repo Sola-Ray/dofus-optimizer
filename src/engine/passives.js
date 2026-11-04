@@ -50,12 +50,13 @@ export const PASSIVES = {
     moyen: { do: 16 }, burst: { do: 20 },
   },
   // Ébène : +2 % distance par attaque en mêlée, +2 % mêlée par attaque à distance (3 tours, 5 fois).
-  // Les deux dans le même tour : poison de 16 sur 2 tours, relance 2 tours, soit un poison actif en
-  // continu ; il ne frappe qu'à partir du tour 2 (4 tours sur 5).
+  // Les deux dans le même tour : poison de 16 sur 2 tours, relance 2 tours. Chiffré d'après les sorts
+  // joués (s.play, voir ebene) : très fort avec des zones, faible en monocible.
   18629: {
-    moyen: { pctDist: 4, pctMelee: 4, poison: 16 * 0.8 }, burst: { pctDist: 10, pctMelee: 10, poison: 16 },
-    note: 'Demande une attaque en mêlée et une à distance à chaque tour : en ne jouant qu\'à distance, '
-      + 'seul le bonus en mêlée se déclenche et il ne sert à rien. Poison de 16 par tour à partir du tour 2.',
+    moyen: s => ebene(s), burst: { pctDist: 10, pctMelee: 10, poison: 16 },
+    note: 'Dépend de tes sorts : un sort en zone touche souvent un ennemi au contact et un autre à distance, '
+      + 'ce qui déclenche les deux bonus d\'un coup. En monocible, seul le bonus inutile se déclenche presque à chaque fois. '
+      + 'Poison de 16 par tour quand les deux se déclenchent dans le même tour.',
   },
   8394: { // Ocre : +1 PA au début du tour si aucune attaque subie depuis le tour précédent
     moyen: s => perTurn(s, UNHIT_MOYEN), burst: s => perTurn(s, 1),
@@ -198,6 +199,36 @@ function turns(s, n, phases) {
 // Tour de burst : le meilleur tour possible (avec ou sans l'effet)
 function best(s, extra, fin) {
   return { finaux: Math.max(0, perTurn(s, extra, fin).finaux) };
+}
+
+// Ébène sur un combat moyen de 5 tours, à partir des sorts joués :
+//   s.play = { aoe : part des lancers en zone (DofusBook), contact : part des lancers possibles au
+//   contact (portée minimale ≤ 1) }, s.attack = 'dist' | 'melee'.
+// Par lancer, chance de toucher un ennemi au contact (near) et un ennemi à distance (far) :
+//   - sort en zone : EBENE_ZONE de toucher les deux (monstres groupés en PvM) ;
+//   - sort monocible : il frappe dans ton mode ; en mode distance, un sort lançable au contact
+//     touche un ennemi au contact EBENE_SINGLE fois (et inversement en mêlée).
+// Chaque lancer qui touche ajoute un cumul (3 tours, 5 au plus) ; bonus moyen vu par les lancers
+// du combat, EBENE_CASTS lancers par tour. Poison : les deux déclenchés dans le tour, à partir du tour 2.
+const EBENE_ZONE = 0.6, EBENE_SINGLE = 0.2, EBENE_CASTS = 3;
+function ebene(s) {
+  const { aoe = 0, contact = 0, ranged = 0 } = s.play || {};
+  const melee = s.attack === 'melee';
+  // un lancer touche toujours dans ton mode ; l'autre type d'attaque dépend des zones
+  const other = aoe * EBENE_ZONE + (1 - aoe) * (melee ? ranged : contact) * EBENE_SINGLE;
+  const near = melee ? 1 : other, far = melee ? other : 1;
+  const avgStacks = p => {
+    let total = 0, n = 0;
+    const procs = [];
+    for (let t = 0; t < 5; t++) for (let c = 0; c < EBENE_CASTS; c++) {
+      const live = procs.filter(x => x.t > t - 3).reduce((a, x) => a + x.p, 0);
+      total += Math.min(5, live); n++;
+      procs.push({ t, p });
+    }
+    return total / n;
+  };
+  const both = (1 - (1 - near) ** EBENE_CASTS) * (1 - (1 - far) ** EBENE_CASTS);
+  return { pctDist: 2 * avgStacks(near), pctMelee: 2 * avgStacks(far), poison: 16 * both * 0.8 };
 }
 
 export function critChance(s, spellCrit = 10) {

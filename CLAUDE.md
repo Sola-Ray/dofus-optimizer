@@ -19,6 +19,9 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 
 ## Pièges des données
 
+- **Paliers de panoplie** : dans DofusDB, `effects[k]` est le bonus à k + 1 objets (`effects[0]` = 1 objet, vide). `build-data` décale d'un cran pour que `b[n]` soit le bonus à n objets. Avant la correction, chaque panoplie donnait le bonus du palier suivant (Katcheur ×2 recevait le +1 PA du ×3) et le moteur la surévaluait.
+- **Zones des sorts** : `data/dofusbook-spells.json` (versionné), exporté depuis un navigateur via `https://www.dofusbook.net/api/spells/class/<id>` (19 classes + 19 = sorts communs), à refaire à chaque patch. `build-data` en tire `zb` (groupes qui frappent un ennemi : titre, zone, taille).
+- **Ébène** : ses bonus se déclenchent par sous-sort sur `CDM` / `CDR` (le porteur occasionne des dommages en mêlée / à distance), donc à chaque instance de dommages : un sort en zone qui touche 3 monstres en donne 3.
 - Les **malus de panoplie** sont stockés déjà négatifs (`from: -40`) alors que ceux des items sont positifs : `statOf` prend la valeur absolue avant d'appliquer le signe.
 - Les **passifs** (Dofus, prysmaradites, légendaires) sont l'effet `1175` ; l'id du sort est dans `diceNum`. Leur texte officiel est dans le sort, leur effet chiffré est codé à la main dans `src/engine/passives.js`.
 - Pour savoir quand un passif se déclenche, lire les effets du sort dans `spell-levels` : `triggers` (`TB` = début de tour, `TE` = fin de tour, `D` = dommages subis, `CC` = coup critique…) et `delay`. Vulbis et Ocre ont `TB` avec `delay: 1` : rien au tour 1.
