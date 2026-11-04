@@ -7,6 +7,7 @@
 import {
   baseStats, statPoints, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
   FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, PA_CAP, STAT_CAP, lineCap, pointSegments,
+  DERIVED, totalStat,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
 import { classSpells, elementSpells, score, elementScores, paFactor, SPELL_RULES } from './damage.js';
@@ -47,6 +48,31 @@ const EPS_RES = 1e-6; // départage : à dégâts égaux, préférer plus de ré
 // Rés. moyenne : chaque élément compte au plus 50 %, au-delà c'est de la résistance gâchée
 const RES_CAP = 50;
 export const resMoy = st => RES_KEYS.reduce((t, r) => t + Math.min(st[r] || 0, RES_CAP), 0) / 5;
+// Valeur d'un minimum : rés. moyenne, total en jeu (initiative, fuite…, voir DERIVED) ou stat brute
+export const minValue = (st, k) => (k === 'resMoy' ? resMoy(st) : totalStat(st, k));
+
+// Minimum sur une stat calculée (DERIVED), en lignes LP. lin(c) = { terms: [[coef, var]], cst } :
+// la stat c vaut Σ coef × var + cst. Un diviseur passe par un entier q (n q <= stat) pour l'arrondi
+// par défaut du jeu (floor(agilité / 10)).
+function derivedMinRows(k, v, lin, tag) {
+  const rows = [], bounds = [], generals = [];
+  const self = lin(k);
+  const terms = [...self.terms];
+  let cst = self.cst + (DERIVED[k].base || 0);
+  for (const [c, f] of DERIVED[k].terms) {
+    const l = lin(c);
+    if (f < 1) {
+      const q = `q${tag}_${k}_${c}`;
+      rows.push(` dq${tag}_${k}_${c}:${term(1 / f, q)}${l.terms.map(([a, x]) => term(-a, x)).join('')} <= ${num(l.cst)}`);
+      bounds.push(` ${q} free`); generals.push(q);
+      terms.push([1, q]);
+    } else {
+      terms.push(...l.terms.map(([a, x]) => [f * a, x])); cst += f * l.cst;
+    }
+  }
+  if (terms.length) rows.push(` m${tag}_${k}:${terms.map(([a, x]) => term(a, x)).join('')} >= ${num(v - cst)}`);
+  return { rows, bounds, generals };
+}
 
 // ---------- Préparation ----------
 
@@ -54,7 +80,7 @@ function relevantKeys(cfg) {
   const keys = new Set(['do', 'puissance', 'crit', 'doCrit', 'pctSorts', 'pctFinaux', cfg.attack === 'melee' ? 'pctMelee' : 'pctDist',
     'pa', 'pm', 'vita', ...CARACS, ...RES_KEYS]);
   for (const el of cfg.elements) { keys.add(ELEMENT_STAT[el]); keys.add(ELEMENT_DO[el]); }
-  for (const k of Object.keys(cfg.min)) if (k !== 'resMoy') keys.add(k);
+  for (const k of Object.keys(cfg.min)) if (k !== 'resMoy') { keys.add(k); for (const [c] of DERIVED[k]?.terms || []) keys.add(c); }
   return keys;
 }
 
@@ -69,7 +95,10 @@ export function passiveMatters(p) {
 function fmKeys(cfg) {
   const k = new Set(['do', 'puissance', 'crit', 'doCrit', 'pctSorts', cfg.attack === 'melee' ? 'pctMelee' : 'pctDist', ...SINGLE_EXO]);
   for (const el of cfg.elements) { k.add(ELEMENT_STAT[el]); k.add(ELEMENT_DO[el]); }
-  for (const m of Object.keys(cfg.min)) if (m === 'resMoy') RES_KEYS.forEach(r => k.add(r)); else k.add(m);
+  for (const m of Object.keys(cfg.min)) {
+    if (m === 'resMoy') RES_KEYS.forEach(r => k.add(r));
+    else { k.add(m); for (const [c] of DERIVED[m]?.terms || []) k.add(c); }
+  }
   return k;
 }
 
@@ -246,7 +275,7 @@ export function problemBase(game, cfg) {
     if (!trans[r.k] || r.v > trans[r.k].v) trans[r.k] = r;
   }
   // Critique visé pour que tous les sorts de l'élément qui peuvent critiquer soient à 100 %
-  const critTarget = Math.max(0, ...cfg.elements.map(el => {
+  const critTarget = cfg.critTarget ?? Math.max(0, ...cfg.elements.map(el => {
     const cc = refSpells[el].filter(sp => sp.cc > 0).map(sp => sp.cc);
     return cc.length ? 100 - Math.min(...cc) : 0;
   }));
@@ -454,6 +483,10 @@ export function buildSections(problem, cuts) {
       }
       rows.push(` min_resMoy:${RES_KEYS.map(r => ` + 0.2 rm_${r}`).join('')} >= ${v}`);
     }
+    else if (DERIVED[k]) {
+      const d = derivedMinRows(k, v, c => ({ terms: [[1, `T_${c}`]], cst: 0 }), '');
+      rows.push(...d.rows); bounds.push(...d.bounds); generals.push(...d.generals);
+    }
     else if (keys.includes(k)) rows.push(` min_${k}: T_${k} >= ${v}`);
   }
 
@@ -640,7 +673,7 @@ async function finishItems(solver, problem, sol, grad) {
 
   const mins = { ...cfg.min };
   if (problem.mode === 'crit' && problem.critTarget > 0) mins.crit = Math.max(mins.crit || 0, problem.critTarget);
-  const minRows = [], minBounds = [];
+  const minRows = [], minBounds = [], minGens = [];
   for (const [k, v] of Object.entries(mins)) {
     if (k === 'resMoy') {
       // rq_r = min(base_r + forgemagie_r, 50), comme dans le modèle principal
@@ -651,6 +684,9 @@ async function finishItems(solver, problem, sol, grad) {
       }
       const have = RES_KEYS.filter(r => !contrib[r]).reduce((t, r) => t + Math.min(base[r] || 0, RES_CAP), 0) / 5;
       if (capped.length) minRows.push(` m_resMoy:${capped.map(r => ` + 0.2 rq_${r}`).join('')} >= ${num(v - have)}`);
+    } else if (DERIVED[k]) {
+      const d = derivedMinRows(k, v, c => ({ terms: contrib[c] || [], cst: base[c] || 0 }), 'f');
+      minRows.push(...d.rows); minBounds.push(...d.bounds); minGens.push(...d.generals);
     } else if (contrib[k]) minRows.push(` m_${k}:${contrib[k].map(([c, x]) => term(c, x)).join('')} >= ${num(v - (base[k] || 0))}`);
   }
   if (!bins.length) return { perItem: {}, transPerItem: {}, fm: {} };
@@ -677,9 +713,13 @@ async function finishItems(solver, problem, sol, grad) {
     if (gv.length) rows.push(` cw${it.idx}:${gv.map(v => ` + ${v}`).join('')} >= 1`);
   }
 
-  const build = withMins => ['Maximize', obj, 'Subject To', ...rows, ...(withMins ? minRows : []),
-    ...(rows.length || minRows.length ? [] : [' dummy: 0 x0 >= 0']),
-    'Bounds', ...bounds, ...(withMins ? minBounds : []), ...(gens.length ? ['General', ' ' + gens.join(' ')] : []), 'Binary', ' ' + bins.join(' '), 'End'].join('\n');
+  const build = withMins => {
+    const g = withMins ? [...gens, ...minGens] : gens;
+    return ['Maximize', obj, 'Subject To', ...rows, ...(withMins ? minRows : []),
+      ...(rows.length || minRows.length ? [] : [' dummy: 0 x0 >= 0']),
+      'Bounds', ...bounds, ...(withMins ? minBounds : []), ...(g.length ? ['General', ' ' + g.join(' ')] : []),
+      'Binary', ' ' + bins.join(' '), 'End'].join('\n');
+  };
   let r = await solver.solve(build(true), { time_limit: 10 });
   if (r.Status !== 'Optimal') r = await solver.solve(build(false), { time_limit: 10 });
 
@@ -856,7 +896,7 @@ async function fixByReducedCost(session, problem, lp, start) {
 export async function kelley(solver, problem, cuts, start, onProgress, phase, fast = false) {
   const session = await solver.open(buildLP(problem, cuts));
   try {
-    onProgress({ mode: problem.mode, phase, iter: 0, items: problem.items.length });
+    onProgress({ mode: problem.runName ?? problem.mode, phase, iter: 0, items: problem.items.length });
     const lp = fast ? await relaxedCuts(session, problem, cuts) : null;
     let fixed = [], outside = -Infinity;
     if (start && fast) {
@@ -878,7 +918,7 @@ export async function kelley(solver, problem, cuts, start, onProgress, phase, fa
       const curStats = solutionStats(problem, cur);
       const val = score(curStats, ctxOf(problem, cur.items.filter(it => it.passive).map(it => it.passive)));
       if (!best || val > best.value) best = { ...cur, value: val, cols: r.cols };
-      onProgress({ mode: problem.mode, phase, iter: iter + 1, value: best.value, items: problem.items.length });
+      onProgress({ mode: problem.runName ?? problem.mode, phase, iter: iter + 1, value: best.value, items: problem.items.length });
       if (Math.log(best.value) >= upper - 1e-3) break;
       // les nouvelles coupes ont fait passer l'optimum sous la borne des items fixés : on les libère
       if (fixed.length && r.optimal && r.objective < outside) {
@@ -920,10 +960,11 @@ export function startCuts(problem, startStats) {
   return cuts;
 }
 
-async function solveMode(solver, game, cfg, mode, onProgress) {
+async function solveMode(solver, game, cfg, mode, onProgress, name = mode) {
   const full = prepare(game, cfg);
   full.setsById = game.sets;
   full.mode = mode;
+  full.runName = name;
   full.tight = true; // formulation renforcée (voir buildSections)
   const startStats = startStatsOf(full);
 
@@ -948,7 +989,7 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
     problem = full;
   }
 
-  onProgress({ mode, phase: 3, iter: 0, value: best.value, items: problem.items.length });
+  onProgress({ mode: name, phase: 3, iter: 0, value: best.value, items: problem.items.length });
   return finalize(solver, problem, best);
 }
 
@@ -1006,7 +1047,7 @@ function improveFinishes(problem, best, finish, ctx) {
   };
   const mins = { ...cfg.min };
   if (problem.mode === 'crit' && problem.critTarget > 0) mins.crit = Math.max(mins.crit || 0, problem.critTarget);
-  const ok = st => Object.entries(mins).every(([k, v]) => (k === 'resMoy' ? resMoy(st) : st[k] || 0) >= v - 1e-6)
+  const ok = st => Object.entries(mins).every(([k, v]) => minValue(st, k) >= v - 1e-6)
     && best.items.every(it => checkCriteria(it.crit, st));
   const evaluate = () => {
     const st = solutionStats(problem, { ...best, fm: totals(), trans: {} });
@@ -1094,12 +1135,33 @@ export function normalizeConfig(game, config) {
 
 export const gelanoLevel = game => game.items.find(it => it.id === GELANO)?.l ?? 60;
 
+// Modes de critique essayés. Auto : 100 % (tous les sorts de l'élément), sans critique, et des
+// planchers intermédiaires (« critN » : au moins N % de critique du stuff, le critique compte pour sa
+// vraie valeur). Les dégâts ne sont pas concaves en (taux de critique × dégâts critiques) : un seul
+// plancher libre ne trouve pas toujours le compromis (Eni feu : 70 % bat 50 % et 100 %), d'où
+// plusieurs planchers. Mesuré sur des stuffs Huzounet : jusqu'à +5 % face au meilleur de 100 % / sans.
+export const CRIT_FLOOR_STEPS = [20, 40];
+export function critModes(game, cfg) {
+  if (cfg.critMode !== 'auto') return [cfg.critMode];
+  const target = problemBase(game, cfg).critTarget;
+  const floors = CRIT_FLOOR_STEPS.map(d => target - d).filter(v => v > 0);
+  return ['crit', 'noncrit', ...floors.map(v => `crit${v}`)];
+}
+// Mode du modèle et plancher de critique d'un mode (« crit70 » → crit, 70)
+export function parseCritMode(m) {
+  const x = /^crit(\d+)$/.exec(m);
+  return x ? { mode: 'crit', floor: Number(x[1]) } : { mode: m, floor: null };
+}
+
 export async function optimize(solver, game, config, onProgress = () => {}) {
   const cfg = normalizeConfig(game, config);
-  const modes = cfg.critMode === 'auto' ? ['crit', 'noncrit'] : [cfg.critMode];
+  const modes = critModes(game, cfg);
   let lastError;
-  const runs = (await Promise.all(modes.map(mode => solveMode(solver, game, cfg, mode, onProgress)
-    .then(r => ({ mode, ...r }), e => { lastError = e; return null; })))).filter(Boolean);
+  const runs = (await Promise.all(modes.map(name => {
+    const { mode, floor } = parseCritMode(name);
+    return solveMode(solver, game, floor === null ? cfg : { ...cfg, critTarget: floor }, mode, onProgress, name)
+      .then(r => ({ mode: name, ...r }), e => { lastError = e; return null; });
+  }))).filter(Boolean);
   if (!runs.length) throw lastError;
   const chosen = runs.reduce((a, b) => (b.realScore > a.realScore ? b : a));
   return buildResult(cfg, chosen, runs, modes.length > runs.length ? lastError?.message : null);
@@ -1142,7 +1204,7 @@ export function buildResult(cfg, chosen, runs, failed = null) {
 
 // Minimums demandés non tenus
 export function violationsOf(cfg, stats) {
-  const got = k => (k === 'resMoy' ? resMoy(stats) : stats[k] || 0);
+  const got = k => minValue(stats, k);
   return Object.entries(cfg.min).filter(([k, v]) => got(k) < v - 1e-6).map(([k, v]) => ({ key: k, min: v, got: got(k) }));
 }
 
@@ -1150,9 +1212,13 @@ export function violationsOf(cfg, stats) {
 // dans le mode critique choisi à la génération
 export async function refinish(solver, game, r) {
   const ids = new Set(r.items.map(it => it.id));
-  const cfg = { ...r.config, forced: [...new Set([...r.config.forced, ...ids])], banned: r.config.banned.filter(id => !ids.has(id)) };
+  const { mode, floor } = parseCritMode(r.crit.mode);
+  const cfg = {
+    ...r.config, forced: [...new Set([...r.config.forced, ...ids])], banned: r.config.banned.filter(id => !ids.has(id)),
+    ...(floor === null ? {} : { critTarget: floor }),
+  };
   const problem = prepare(game, cfg);
-  problem.mode = r.crit.mode;
+  problem.mode = mode;
   const byId = new Map(problem.items.map(it => [it.id, it]));
   const best = { items: r.items.map(it => ({ ...byId.get(it.id), st: it.st })), points: r.points };
   const chosen = { mode: r.crit.mode, ...(await finalize(solver, problem, best)) };

@@ -26,7 +26,7 @@
 import { classSpells } from './damage.js';
 import { turnDamage, equippedWeapon } from './rotation.js';
 import { classBuffs, activeTurns, thenTurns } from './buffs.js';
-import { CARACS, ELEMENT_STAT } from './rules.js';
+import { ELEMENT_STAT, totalStat } from './rules.js';
 
 const ENEMY = new Set(['enemy', 'enemies']);
 // Encouragements d'Eniripsa (Stimulant, Jouvence, Vivifiant, Galvanisant) : chacun retire d'abord les
@@ -34,7 +34,7 @@ const ENEMY = new Set(['enemy', 'enemies']);
 const ENCOURAGEMENT = new Set([25742, 25743, 25744, 25745]);
 
 // Initiative d'un perso : somme des caractéristiques + bonus d'initiative (PV pleins)
-export const initiativeOf = stats => (stats.ini || 0) + CARACS.reduce((t, c) => t + (stats[c] || 0), 0);
+export const initiativeOf = stats => totalStat(stats, 'ini');
 
 // Membre prêt à simuler, à partir d'un résultat d'optimisation (une fiche sauvegardée)
 function member(game, m) {

@@ -1,5 +1,5 @@
 {
- "note": "Stats totales affichées par DofusBook (page objets) pour des stuffs de Huzounet. Do <élément> = Dommages + Dommages élément ; Vitalité sans la vie de base.",
+ "note": "Stats totales affichées par DofusBook (page objets) pour des stuffs de Huzounet. Do <élément> = Dommages + Dommages élément ; PdV = vie de base comprise.",
  "stuffs": {
   "15Y7N": {
    "PdV": 4103,
@@ -34,7 +34,16 @@
    "Ré Eau": 0,
    "% Ré Eau": 27,
    "Ré Air": 15,
-   "% Ré Air": 24
+   "% Ré Air": 24,
+   "Initiative": 2678,
+   "PP": 220,
+   "Tacle": 50,
+   "Fuite": 96,
+   "Esq. PA": 47,
+   "Esq. PM": 47,
+   "Ret. PA": 57,
+   "Ret. PM": 47,
+   "Pods": 3050
   },
   "1aBsR": {
    "PdV": 4453,

@@ -8,11 +8,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import highsLoader from 'highs';
-import { optimize, refinish, normalizeConfig } from '../src/engine/optimize.js';
+import { optimize, refinish, normalizeConfig, critModes, parseCritMode } from '../src/engine/optimize.js';
 import { evaluateStuff } from '../src/engine/edit.js';
 import { createSession } from '../src/engine/session.js';
 import { simulateSpell, spellAtLevel, SPELL_RULES } from '../src/engine/damage.js';
 import { huzounetStuffs, huzounetResult } from './huzounet.mjs';
+import { totalStat } from '../src/engine/rules.js';
 
 const json = p => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
 const game = json('../public/game.json');
@@ -21,7 +22,9 @@ const evaluated = code => evaluateStuff(game, huzounetResult(game, stuffs.find(s
 
 // Libellés DofusBook → stats du moteur (Do <élément> affiché = Dommages + Dommages élément)
 const DB = {
-  PA: s => s.pa, PM: s => s.pm, PO: s => s.po, Critique: s => s.crit, 'Vitalité': s => s.vita - 1045,
+  PA: s => s.pa, PM: s => s.pm, PO: s => s.po, Critique: s => s.crit, PdV: s => s.vita, 'Vitalité': s => s.vita - 1050,
+  Initiative: s => totalStat(s, 'ini'), PP: s => totalStat(s, 'pp'), Tacle: s => totalStat(s, 'tacle'), Fuite: s => totalStat(s, 'fuite'),
+  'Esq. PA': s => totalStat(s, 'esqPA'), 'Esq. PM': s => totalStat(s, 'esqPM'), 'Ret. PA': s => totalStat(s, 'retPA'), 'Ret. PM': s => totalStat(s, 'retPM'), Pods: s => totalStat(s, 'pods'),
   Sagesse: s => s.sagesse, Force: s => s.force, Intelligence: s => s.intel, Chance: s => s.chance, 'Agilité': s => s.agi,
   Puissance: s => s.puissance, Dommages: s => s.do, 'Do Critique': s => s.doCrit,
   'Do Neutre': s => s.do + s.doNeutre, 'Do Terre': s => s.do + s.doTerre, 'Do Feu': s => s.do + s.doFeu,
@@ -99,15 +102,36 @@ test('forgemagie finale : conditions de port respectées', { timeout: 120_000 },
   assert.deepEqual(r.violations, []);
 });
 
-// Score attendu du moteur sur un stuff Huzounet donné, mêmes contraintes (voir compare-huzounet.mjs)
-const SNAPSHOT = { '1Kjm2': 1482.2 };
+// Score attendu du moteur sur un stuff Huzounet donné, mêmes contraintes (voir compare-huzounet.mjs).
+// Iop terre : le stuff sans critique gagne. Eni feu : le compromis à 70 % de critique (75 % obtenu)
+// bat 100 % (1036,4) et sans critique (989,7).
+const SNAPSHOT = { '1Kjm2': [1482.2, 'noncrit'], '15Y7N': [1083.8, 'crit70'] };
 
-test('optimiseur : bat le stuff Huzounet, score stable', { timeout: 300_000 }, async () => {
+test('mode critique auto : 100 %, sans, et deux planchers intermédiaires', () => {
+  const cfg = normalizeConfig(game, { breedId: 7, elements: ['feu'], critMode: 'auto' });
+  assert.deepEqual(critModes(game, cfg), ['crit', 'noncrit', 'crit70', 'crit50']);
+  assert.deepEqual(parseCritMode('crit70'), { mode: 'crit', floor: 70 });
+  assert.deepEqual(parseCritMode('noncrit'), { mode: 'noncrit', floor: null });
+});
+
+test('minimums sur des stats calculées (fuite, prospection) tenus comme en jeu', { timeout: 300_000 }, async () => {
   const highs = await highsLoader();
   const solver = { open: async lp => createSession(highs, lp), solve: async (lp, o) => highs.solve(lp, o) };
-  for (const [code, expected] of Object.entries(SNAPSHOT)) {
+  const min = { pa: 11, pm: 5, fuite: 130, pp: 180 };
+  const r = await optimize(solver, game, { breedId: 8, elements: ['terre'], attack: 'melee', critMode: 'noncrit', maxIterations: 3, min });
+  assert.deepEqual(r.violations, []);
+  // fuite totale = fuite des items + floor(agilité / 10) ; prospection = items + floor(chance / 10) + 100
+  assert.equal(totalStat(r.stats, 'fuite'), (r.stats.fuite || 0) + Math.floor(r.stats.agi / 10));
+  assert.ok(totalStat(r.stats, 'fuite') >= 130 && totalStat(r.stats, 'pp') >= 180);
+});
+
+test('optimiseur : bat le stuff Huzounet, score stable', { timeout: 600_000 }, async () => {
+  const highs = await highsLoader();
+  const solver = { open: async lp => createSession(highs, lp), solve: async (lp, o) => highs.solve(lp, o) };
+  for (const [code, [expected, mode]] of Object.entries(SNAPSHOT)) {
     const theirs = evaluated(code);
     const ours = await optimize(solver, game, { ...theirs.config, critMode: 'auto' });
+    assert.equal(ours.crit.mode, mode, `${code} : mode critique choisi`);
     assert.deepEqual(ours.violations, [], `${code} : minimums tenus`);
     assert.deepEqual(ours.unmetConditions, [], `${code} : conditions de port`);
     assert.ok(ours.score >= theirs.score - 1e-6, `${code} : ${ours.score} < Huzounet ${theirs.score}`);

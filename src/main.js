@@ -5,7 +5,7 @@ import { simulateSpell, classSpells, passivePoison } from './engine/damage.js';
 import { turnDamage, equippedWeapon } from './engine/rotation.js';
 import { PASSIVES } from './engine/passives.js';
 import { evaluateStuff, placeItem, alternatives } from './engine/edit.js';
-import { STAT_LABEL, ELEMENTS, STAT_CAP } from './engine/rules.js';
+import { STAT_LABEL, ELEMENTS, STAT_CAP, totalStat } from './engine/rules.js';
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -19,12 +19,30 @@ const SLOT_LABEL = {
 };
 const SLOT_ORDER = Object.keys(SLOT_LABEL);
 const MODE_LABEL = { crit: 'Stuff 100 % critique', noncrit: 'Stuff sans critique' };
+// « crit70 » : au moins 70 % de critique du stuff (plancher intermédiaire du mode Auto)
+const modeLabel = m => MODE_LABEL[m] || (/^crit\d+$/.test(m) ? `Stuff ≥ ${m.slice(4)} % critique` : m);
 
 // Minimums proposés dans le formulaire (clé, libellé)
 const MIN_FIELDS = [
   ['pa', 'PA'], ['pm', 'PM'], ['po', 'Portée'], ['vita', 'Vitalité'], ['resMoy', '% Rés. moyenne'],
   ['crit', '% Critique'], ['invo', 'Invocations'], ['tacle', 'Tacle'], ['fuite', 'Fuite'],
 ];
+// Toutes les autres stats, en minimum facultatif. Initiative, tacle, fuite, prospection, esquives,
+// retraits et pods comptent comme en jeu (avec les caractéristiques, voir DERIVED dans rules.js).
+const MORE_MINS = [
+  ['Caractéristiques', ['force', 'intel', 'chance', 'agi', 'sagesse', 'puissance']],
+  ['Dommages', ['do', 'doFeu', 'doEau', 'doTerre', 'doAir', 'doNeutre', 'doCrit', 'doPou', 'pctSorts', 'pctDist', 'pctMelee', 'pctArmes', 'pctFinaux', 'soins']],
+  ['Résistances', ['resFeu', 'resEau', 'resTerre', 'resAir', 'resNeutre', 'rfFeu', 'rfEau', 'rfTerre', 'rfAir', 'rfNeutre', 'resCrit', 'resPou', 'resDist', 'resMelee']],
+  ['Divers', ['ini', 'pp', 'esqPA', 'esqPM', 'retPA', 'retPM', 'pods', 'renvoi']],
+];
+const minField = (k, l) => `<label class="field small">${l}<input type="number" min="0"${STAT_CAP[k] ? ` max="${STAT_CAP[k]}"` : ''} data-min="${k}" value="${config.min[k] ?? ''}" placeholder="—"></label>`;
+function moreMins() {
+  const n = MORE_MINS.flatMap(([, ks]) => ks).filter(k => config.min[k] !== undefined).length;
+  return `<details class="more-mins"${n ? ' open' : ''}>
+    <summary>Autres minimums <small>${n ? `${n} défini${n > 1 ? 's' : ''}` : 'toutes les stats'}</small></summary>
+    ${MORE_MINS.map(([title, ks]) => `<h3>${title}</h3><div class="grid2">${ks.map(k => minField(k, STAT_LABEL[k])).join('')}</div>`).join('')}
+  </details>`;
+}
 
 let game;
 let lastResult = null;
@@ -130,7 +148,7 @@ function renderConfig() {
         <label title="Le meilleur tour pour frapper"><input type="radio" name="scenario" value="burst" ${config.scenario === 'burst' ? 'checked' : ''}>Tour de burst</label>
       </fieldset>
       ${lv ? '' : `<fieldset class="seg seg3"><legend>Critique</legend>
-        <label title="Compare 100 % critique et sans critique, garde le meilleur"><input type="radio" name="critMode" value="auto" ${config.critMode === 'auto' ? 'checked' : ''}>Auto</label>
+        <label title="Compare 100 % critique, sans critique et deux compromis intermédiaires, garde le meilleur"><input type="radio" name="critMode" value="auto" ${config.critMode === 'auto' ? 'checked' : ''}>Auto</label>
         <label title="Vise 100 % critique sur tous les sorts de l'élément"><input type="radio" name="critMode" value="crit" ${config.critMode === 'crit' ? 'checked' : ''}>100 %</label>
         <label><input type="radio" name="critMode" value="noncrit" ${config.critMode === 'noncrit' ? 'checked' : ''}>Sans</label>
       </fieldset>
@@ -140,8 +158,9 @@ function renderConfig() {
     ${lv ? levelingSection() : `<section>
       <h2>Minimums à respecter</h2>
       <div class="grid2">
-        ${MIN_FIELDS.map(([k, l]) => `<label class="field small">${l}<input type="number" min="0"${STAT_CAP[k] ? ` max="${STAT_CAP[k]}"` : ''} data-min="${k}" value="${config.min[k] ?? ''}" placeholder="—"></label>`).join('')}
+        ${MIN_FIELDS.map(([k, l]) => minField(k, l)).join('')}
       </div>
+      ${moreMins()}
     </section>`}
     ${lv && !config.leveling.fm ? '' : `<section>
       <h2>Forgemagie</h2>
@@ -330,7 +349,8 @@ function run() {
     worker.postMessage({ type: 'leveling', config: { ...config, critMode: 'noncrit' } });
     return;
   }
-  startProgress((config.critMode === 'auto' ? 2 : 1) * nEl);
+  // Auto : 100 %, sans critique et deux planchers intermédiaires (critModes dans optimize.js)
+  startProgress((config.critMode === 'auto' ? 4 : 1) * nEl);
   worker.postMessage({ type: 'run', config });
 }
 
@@ -350,7 +370,7 @@ worker.onmessage = ({ data }) => {
     if (data.value === undefined) return;
     const el = data.element ? `${EL_LABEL[data.element]} · ` : '';
     if (data.label) setStatus(`${el}${data.label} · ${data.phase === 3 ? 'finitions' : `itération ${data.iter}`} · ${fmt(data.value)} dégâts moyens par sort${sub === 'joint' ? ' au dernier palier' : ''}`);
-    else setStatus(`${el}${MODE_LABEL[sub]} · ${['', 'meilleurs items', 'tous les items', 'finitions'][data.phase]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
+    else setStatus(`${el}${modeLabel(sub)} · ${['', 'meilleurs items', 'tous les items', 'finitions'][data.phase]} · itération ${data.iter} · ${fmt(data.value)} dégâts moyens par sort`);
   } else if (data.type === 'result') {
     // termine visiblement à 100 % avant de rendre la main
     clearInterval(progress.timer);
@@ -730,7 +750,7 @@ function renderStuff() {
     ['Caractéristiques', ['force', 'intel', 'chance', 'agi', 'sagesse', 'puissance']],
     ['Dommages', ['do', 'doFeu', 'doEau', 'doTerre', 'doAir', 'doNeutre', 'doCrit', 'pctSorts', 'pctDist', 'pctMelee', 'pctFinaux']],
     ['Résistances', ['resFeu', 'resEau', 'resTerre', 'resAir', 'resNeutre', 'rfFeu', 'rfEau', 'rfTerre', 'rfAir', 'rfNeutre', 'resCrit']],
-    ['Divers', ['tacle', 'fuite', 'retPA', 'retPM', 'esqPA', 'esqPM', 'ini', 'pp', 'soins']],
+    ['Divers', ['tacle', 'fuite', 'retPA', 'retPM', 'esqPA', 'esqPM', 'ini', 'pp', 'pods', 'soins']],
   ];
   $('#tab-stuff').innerHTML = `
     ${saveBar()}
@@ -761,7 +781,7 @@ function renderStuff() {
     ${r.setBonuses.length ? `<h2>Bonus de panoplie</h2><div class="sets">${r.setBonuses.map(b => `<div class="setbox"><strong>${esc(b.n)}</strong> (${b.count} items)<ul class="lines">${statLines(b.bonus)}</ul></div>`).join('')}</div>` : ''}
     <h2>Caractéristiques finales</h2>
     <div class="stat-groups">
-      ${groups.map(([title, keys]) => `<div class="stat-group"><h3>${title}</h3><dl>${keys.map(k => `<dt>${statIcon(k)}${STAT_LABEL[k]}</dt><dd>${fmt(s[k] || 0)}</dd>`).join('')}</dl></div>`).join('')}
+      ${groups.map(([title, keys]) => `<div class="stat-group"><h3>${title}</h3><dl>${keys.map(k => `<dt>${statIcon(k)}${STAT_LABEL[k]}</dt><dd>${fmt(totalStat(s, k))}</dd>`).join('')}</dl></div>`).join('')}
     </div>
     <h2>Valeur des options de forgemagie sur ce stuff</h2>
     <p class="hint">Gain de dégâts si on ajoutait cette seule option au stuff final. Les overs sont comparés à poids égal à 1 % de dommages (15).</p>
@@ -796,9 +816,10 @@ function spellBanner(r) {
 
 function critBanner(r) {
   const c = r.crit;
-  const runs = c.runs.map(x => `${MODE_LABEL[x.mode]} : <strong>${fmt(x.score)}</strong>`).join(' · ');
-  const target = c.mode === 'crit' ? ` (${c.target} % de critique du stuff visés pour que tous les sorts soient à 100 %, actuel ${fmt(r.stats.crit || 0)} %)` : '';
-  return `<p class="banner">Choix du moteur : <strong>${MODE_LABEL[c.mode]}</strong>${target}. ${c.runs.length > 1 ? runs : ''}${c.failed ? ` · ${esc(c.failed)}` : ''}</p>`;
+  const runs = c.runs.map(x => `${modeLabel(x.mode)} : <strong>${fmt(x.score)}</strong>`).join(' · ');
+  const target = c.mode === 'crit' ? ` (${c.target} % de critique du stuff visés pour que tous les sorts soient à 100 %, actuel ${fmt(r.stats.crit || 0)} %)`
+    : c.mode !== 'noncrit' ? ` (compromis : au moins ${c.target} % de critique du stuff, actuel ${fmt(r.stats.crit || 0)} %)` : '';
+  return `<p class="banner">Choix du moteur : <strong>${modeLabel(c.mode)}</strong>${target}. ${c.runs.length > 1 ? runs : ''}${c.failed ? ` · ${esc(c.failed)}` : ''}</p>`;
 }
 
 // ---------- Onglet Simulation ----------

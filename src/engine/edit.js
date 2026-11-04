@@ -5,7 +5,7 @@ import { FM_SLOTS, SINGLE_EXO, STAT_LABEL, lineCap } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
 import { score, elementScores } from './damage.js';
 import {
-  problemBase, solutionStats, ctxOf, passiveMatters, violationsOf, fmComparison, exoNotes, withPa,
+  problemBase, solutionStats, ctxOf, passiveMatters, violationsOf, fmComparison, exoNotes, withPa, parseCritMode,
 } from './optimize.js';
 
 // Jets d'un item du jeu selon la qualité réglée (comme prepare)
@@ -49,7 +49,7 @@ export function evaluateStuff(game, r, lost = []) {
     score: m.score,
     elementScores: withPa(elementScores(m.stats, m.ctx), m.ctx, m.stats),
     ctx: { ...r.ctx, passives: m.passives },
-    fmComparison: fmComparison({ ...base, mode: r.crit.mode }, m.stats, m.passives),
+    fmComparison: fmComparison({ ...base, mode: parseCritMode(r.crit.mode).mode }, m.stats, m.passives),
     exoNotes: exoNotes(r.config, m.stats, perItem),
     violations,
     unmetConditions: r.items.filter(it => !checkCriteria(parseCriteria(it.c), m.stats)).map(it => it.n),

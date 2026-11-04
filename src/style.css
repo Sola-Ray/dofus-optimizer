@@ -301,3 +301,9 @@ button.chip:hover { border-color: var(--gold); }
 .spells-pick summary small { color: var(--muted); font-size: 12px; }
 .spells-pick .chips { margin-top: 8px; }
 .spells-pick .chip small { color: var(--muted); font-size: 11px; }
+
+/* Autres minimums */
+.more-mins { margin-top: 6px; }
+.more-mins summary { cursor: pointer; color: var(--gold); font-weight: 600; }
+.more-mins summary small { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.more-mins h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 2px; }
