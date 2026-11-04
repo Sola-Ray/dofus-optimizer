@@ -12,7 +12,7 @@ const EQUIP_TYPES = [
   1, 9, 10, 11, 16, 17, // amulette, anneau, ceinture, bottes, chapeau, cape
   2, 3, 4, 5, 6, 7, 8, 19, 22, 271, // armes
   82, // bouclier
-  12, 121, 331, 332, 333, // familier, montilier, montures
+  18, 121, 331, 332, 333, // familier (12 = potions), montilier, montures
   23, 151, 217, // dofus, trophée, prysmaradite
 ];
 

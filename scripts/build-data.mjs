@@ -24,7 +24,7 @@ export const CHARAC = {
 const SLOT_OF_TYPE = {
   1: 'amulette', 9: 'anneau', 10: 'ceinture', 11: 'bottes', 16: 'chapeau', 17: 'cape', 82: 'bouclier',
   2: 'arme', 3: 'arme', 4: 'arme', 5: 'arme', 6: 'arme', 7: 'arme', 8: 'arme', 19: 'arme', 22: 'arme', 271: 'arme',
-  12: 'familier', 121: 'familier', 331: 'familier', 332: 'familier', 333: 'familier',
+  18: 'familier', 121: 'familier', 331: 'familier', 332: 'familier', 333: 'familier',
   23: 'dofus', 151: 'dofus', 217: 'dofus',
 };
 
@@ -88,7 +88,10 @@ for (const it of items) {
   let passive = 0;
   for (const e of it.possibleEffects || []) {
     if (e.effectId === PASSIVE_EFFECT) { passive = e.diceNum; continue; }
-    const s = statOf(e.effectId, e.diceNum, e.diceSide);
+    // Sur une arme, les effets de catégorie 2 agissent sur la cible du coup (101 « -PA », 127 « -PM »,
+    // vols de PA / PM…) : pas un malus du porteur. Sans ça, Frisson de Brumaire coûtait 2 PA.
+    const onTarget = slot === 'arme' && effects.get(e.effectId)?.category === 2;
+    const s = onTarget ? null : statOf(e.effectId, e.diceNum, e.diceSide);
     if (s) {
       st[s[0]] = (st[s[0]] || 0) + s[1];
       if (e.diceSide > e.diceNum) roll[s[0]] = [e.diceNum, e.diceSide];
