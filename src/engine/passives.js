@@ -27,7 +27,10 @@ const HITS = 2.5;
 const POURPRE_MOYEN = [0, 1, 2, 2, 2].reduce((t, n) => t + Math.min(10, n * ATTACKED * HITS), 0) / 5;
 // Vulbis et Ocre : à partir du tour 2, si aucune attaque subie depuis ton tour précédent
 const UNHIT_MOYEN = (4 * (1 - ATTACKED)) / 5;
-const ATTACK_NOTE = `Suppose que tu es attaqué un tour sur deux (${HITS} attaques ce tour-là), comme pour le Pourpre, le Vulbis et l'Ocre.`;
+// Prycipithon Brillante / Iridescente : valeur d'un PM sacrifié au tour 1, en PA. En PvM le premier tour
+// sert à se placer ; Huzounet joue la Mate (2 PA, sans malus) sur 29 stuffs et jamais les deux autres.
+const PRY_PM = 1;
+const ATTACK_NOTE =`Suppose que tu es attaqué un tour sur deux (${HITS} attaques ce tour-là), comme pour le Pourpre, le Vulbis et l'Ocre.`;
 
 export const PASSIVES = {
   // --- Dofus ---
@@ -88,7 +91,10 @@ export const PASSIVES = {
   },
   // --- Prysmaradites ---
   14908: { // Surpryz : +100 % / 35 % / 15 % critique sur les 3 premiers tours
-    moyen: { crit: 30 }, burst: { crit: 100 },
+    // Moyenne sur 5 tours, chaque tour plafonné à 100 % (sinon un stuff à 60 % gagnait +30 % en moyenne)
+    moyen: s => ({ crit: [100, 35, 15].reduce((t, b) => t + Math.min(b, 100 * (1 - critChance(s))), 0) / 5 }),
+    burst: { crit: 100 },
+    note: 'Combat moyen : +100 %, +35 % puis +15 % sur les 3 premiers tours, plafonnés à 100 % de critique, moyennés sur 5 tours.',
   },
   14913: { // Prynyang : +10 % / +3 % / -10 % finaux sur 3 tours
     moyen: { finaux: 0.6 }, burst: { finaux: 10 },
@@ -97,10 +103,17 @@ export const PASSIVES = {
   14903: { moyen: s => turns(s, 5, [[3, 1, -10]]), burst: s => best(s, 1, -10), note: PA_NOTE },
   14904: { moyen: s => turns(s, 5, [[2, 2, -35]]), burst: s => best(s, 2, -35), note: PA_NOTE },
   14905: { moyen: s => turns(s, 5, [[1, 3, -50]]), burst: s => best(s, 3, -50), note: PA_NOTE },
-  // Prycipithon : PA au premier tour
+  // Prycipithon : PA au premier tour. Les PM sacrifiés comptent comme autant de PA perdus en combat
+  // moyen (PRY_PM) : au tour 1 il faut se placer. Seul le burst (déjà en place) garde tout le gain.
   14930: { moyen: s => turns(s, 5, [[1, 2, 0]]), burst: s => perTurn(s, 2), note: PA_NOTE },
-  14931: { moyen: s => turns(s, 5, [[1, 3, 0]]), burst: s => perTurn(s, 3), note: PA_NOTE + ' Les 2 PM perdus ne sont pas comptés.' },
-  14932: { moyen: s => turns(s, 5, [[1, 4, 0]]), burst: s => perTurn(s, 4), note: PA_NOTE + ' Les 4 PM perdus ne sont pas comptés.' },
+  14931: {
+    moyen: s => turns(s, 5, [[1, 3 - 2 * PRY_PM, 0]]), burst: s => perTurn(s, 3),
+    note: PA_NOTE + ' Combat moyen : les 2 PM sacrifiés au tour 1 coûtent autant que 2 PA (placement). Burst : déjà en place, ils ne coûtent rien.',
+  },
+  14932: {
+    moyen: s => turns(s, 5, [[1, 4 - 4 * PRY_PM, 0]]), burst: s => perTurn(s, 4),
+    note: PA_NOTE + ' Combat moyen : les 4 PM sacrifiés au tour 1 coûtent autant que 4 PA (placement). Burst : déjà en place, ils ne coûtent rien.',
+  },
   // Pryximite : 2 % mêlée par ennemi à 3 cases ou moins, au début et à la fin du tour 1, pendant 3 tours
   14948: { moyen: { pctMelee: 4 }, burst: { pctMelee: 8 }, note: 'Mêlée uniquement. Suppose 2 ennemis proches : +4 % au tour 1, +8 % aux tours 2 et 3.' },
   11368: { // Audace de Dodge : chaque tour, au hasard, +10 % critique et 1 PM, ou 40 Fuite et Dommages Poussée
@@ -163,7 +176,7 @@ const TOUR1 = {
   14908: { crit: 100 }, // Surpryz
   14913: { finaux: 10 }, // Prynyang
   14903: s => perTurn(s, 1, -10), 14904: s => perTurn(s, 2, -35), 14905: s => perTurn(s, 3, -50), // Pryssion
-  14930: s => perTurn(s, 2), 14931: s => perTurn(s, 3), 14932: s => perTurn(s, 4), // Prycipithon
+  14930: s => perTurn(s, 2), 14931: s => perTurn(s, 3 - 2 * PRY_PM), 14932: s => perTurn(s, 4 - 4 * PRY_PM), // Prycipithon
   14948: { pctMelee: 4 }, // Pryximite
   11368: { crit: 5 }, // Audace de Dodge : une chance sur deux
   7331: s => ((s.elements || []).includes('eau') ? { chance: 400 } : {}), // Dofusteuse : tour 1 = eau
