@@ -714,14 +714,17 @@ export const cutRow = c => ({
 // et ses tangentes (prises aux stats du point fractionnaire) resserrent l'approximation du log des
 // dégâts autour de l'optimum avant le premier MIP, qui coûte, lui, plusieurs secondes. Les tangentes
 // restent des majorants valables où qu'on les prenne : le modèle reste le même, il est juste mieux
-// approché dès le départ.
+// approché dès le départ. Renvoie le dernier LP résolu : relaxation du modèle courant (qui n'a que
+// plus de coupes), sa borne et ses coûts réduits y restent valables.
 const RELAX_ITERS = 12;
 async function relaxedCuts(session, problem, cuts) {
-  let prev = Infinity;
+  let prev = Infinity, last = null;
   for (let i = 0; i < RELAX_ITERS; i++) {
     const r = await session.run({ solve_relaxation: true, time_limit: 20 });
+    if (!r.optimal) break;
+    last = r;
     // arrêt quand le LP ne bouge plus (les passifs fractionnaires gardent un petit écart)
-    if (!r.optimal || prev - r.objective < 1e-4) break;
+    if (prev - r.objective < 1e-4) break;
     prev = r.objective;
     const v = name => r.cols[name]?.Primal ?? 0;
     const stats = { ...problem.base };
@@ -733,6 +736,7 @@ async function relaxedCuts(session, problem, cuts) {
     cuts.push(...newCuts);
     await session.addCuts(newCuts.map(cutRow));
   }
+  return last;
 }
 
 // Point de départ ramené sous toutes les coupes (t = min des tangentes au point) : sinon il viole la
@@ -749,16 +753,45 @@ export function fitStart(start, cuts) {
   return Number.isFinite(t) ? { ...start, t: t - 1e-8 } : start;
 }
 
+// Objectif du modèle en un point de départ
+const objectiveOf = start => {
+  const v = name => start[name]?.Primal ?? start[name] ?? 0;
+  return v('t') + RES_KEYS.reduce((s, k) => s + EPS_RES * v(`T_${k}`), 0);
+};
+
+// Fixation par coûts réduits (phase 2, tous les items, en partant de la solution de la phase 1) :
+// la relaxation continue borne tout stuff qui contient l'item x par z* + d(x) (z* = optimum du LP,
+// d = coût réduit de x, négatif). Si cette borne est sous l'objectif du départ, x vaut 0 dans tout
+// stuff meilleur que lui : on le fixe à 0, et le MIP ne travaille plus que sur les items restants.
+// Renvoie les items fixés et la meilleure borne des stuffs qui en contiennent un.
+async function fixByReducedCost(session, problem, lp, start) {
+  const zinc = objectiveOf(start);
+  const fixed = [];
+  let outside = -Infinity;
+  for (const it of problem.items) {
+    const name = `x${it.idx}`;
+    const bound = lp.objective + (lp.reduced[name] || 0);
+    if ((lp.cols[name]?.Primal ?? 0) < 1e-9 && bound < zinc - 1e-6) { fixed.push(name); outside = Math.max(outside, bound); }
+  }
+  if (fixed.length) await session.setBounds(fixed, 0, 0);
+  return { fixed, outside };
+}
+
 // Boucle de Kelley sur un modèle persistant : coupes ajoutées à chaud, départ sur la solution précédente.
-// fast : pré-boucle sur la relaxation continue et points de départ ajustés aux coupes (le mode
-// leveling s'en passe : son modèle commun est construit sur les coupes des paliers seuls, mesuré plus
-// lent avec elles).
+// fast : pré-boucle sur la relaxation continue, points de départ ajustés aux coupes et, avec un départ,
+// fixation par coûts réduits (le mode leveling s'en passe : son modèle commun est construit sur les
+// coupes des paliers seuls, mesuré plus lent avec les coupes de la relaxation).
 export async function kelley(solver, problem, cuts, start, onProgress, phase, fast = false) {
   const session = await solver.open(buildLP(problem, cuts));
   try {
     onProgress({ mode: problem.mode, phase, iter: 0, items: problem.items.length });
-    if (fast && !start) await relaxedCuts(session, problem, cuts);
-    if (start) await session.warmStart(fast ? fitStart(start, cuts) : start);
+    const lp = fast ? await relaxedCuts(session, problem, cuts) : null;
+    let fixed = [], outside = -Infinity;
+    if (start && fast) {
+      start = fitStart(start, cuts);
+      if (lp) ({ fixed, outside } = await fixByReducedCost(session, problem, lp, start));
+    }
+    if (start) await session.warmStart(start);
     let best = null, upper = Infinity;
     for (let iter = 0; iter < problem.cfg.maxIterations; iter++) {
       const r = await session.run({ time_limit: 60, mip_rel_gap: 1e-4, solve_relaxation: false });
@@ -766,14 +799,20 @@ export async function kelley(solver, problem, cuts, start, onProgress, phase, fa
         const why = problem.mode === 'crit' ? `Impossible d'atteindre ${problem.critTarget} % critique avec ces minimums.` : 'Aucun stuff ne respecte ces minimums.';
         throw new Error(r.infeasible ? why : 'Le solveur n\'a pas trouvé de solution à temps.');
       }
-      // l'objectif n'est une borne que si l'optimum est prouvé
-      if (r.optimal) upper = Math.min(upper, r.objective);
+      // l'objectif n'est une borne que si l'optimum est prouvé ; avec des items fixés, seulement
+      // pour les stuffs sans eux (les autres sont bornés par outside)
+      if (r.optimal) upper = Math.min(upper, Math.max(r.objective, outside));
       const cur = readSolution(problem, r.cols);
       const curStats = solutionStats(problem, cur);
       const val = score(curStats, ctxOf(problem, cur.items.filter(it => it.passive).map(it => it.passive)));
       if (!best || val > best.value) best = { ...cur, value: val, cols: r.cols };
       onProgress({ mode: problem.mode, phase, iter: iter + 1, value: best.value, items: problem.items.length });
       if (Math.log(best.value) >= upper - 1e-3) break;
+      // les nouvelles coupes ont fait passer l'optimum sous la borne des items fixés : on les libère
+      if (fixed.length && r.optimal && r.objective < outside) {
+        await session.setBounds(fixed, 0, 1);
+        fixed = []; outside = -Infinity;
+      }
       const newCuts = makeCuts(problem, curStats, cur);
       cuts.push(...newCuts);
       await session.addCuts(newCuts.map(cutRow));
