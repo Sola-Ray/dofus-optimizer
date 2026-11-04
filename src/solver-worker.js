@@ -16,6 +16,7 @@ self.onmessage = async ({ data }) => {
     else if (op === 'run') result = session.run(data.options);
     else if (op === 'addCuts') session.addCuts(data.cuts);
     else if (op === 'warmStart') session.warmStart(data.start);
+    else if (op === 'setBounds') session.setBounds(data.names, data.lo, data.hi);
     else if (op === 'close') { session?.close(); session = null; }
     else if (op === 'solve') {
       const r = highs.solve(data.lp, data.options);

@@ -47,7 +47,13 @@ Optimiseur de stuff Dofus 3 (patch 3.7). Site : https://sola-ray.github.io/dofus
 
 ## Performance
 
-Le temps passe dans la recherche d'une bonne première solution, pas dans le branch-and-bound. D'où : session HiGHS persistante (coupes ajoutées à chaud + `setSolution`), trois tangentes de départ sur des stats de fin de jeu, phase 1 sur les 40 meilleurs items par emplacement puis phase 2 sur tous les items. N'actualiser la borne de Kelley que si le statut est optimal.
+Le temps passe presque entièrement dans HiGHS (le JS : < 3 %). D'où : session HiGHS persistante (coupes ajoutées à chaud + `setSolution`), trois tangentes de départ sur des stats de fin de jeu, phase 1 sur les 40 meilleurs items par emplacement puis phase 2 sur tous les items. N'actualiser la borne de Kelley que si le statut est optimal.
+
+- **Inégalités de panoplie** (`setj`, `problem.tight`) : sans elles la relaxation continue touche la moitié du bonus à 2 items avec un seul item porté (y_0 = y_2 = 0,5), d'où des MIP lents. Pas dans le modèle commun du leveling (mesuré sans gain).
+- **Pré-boucle LP** (`relaxedCuts`) : Kelley sur la relaxation continue avant le premier MIP ; la phase 1 converge en un MIP au lieu de 4. Les points de départ sont ramenés sous les coupes (`fitStart`), sinon HiGHS doit les réparer.
+- **Phase 2 par coûts réduits** : LP du modèle complet, puis tout item avec z* + d(x) < objectif du départ est fixé à 0 (`setBounds`) ; la borne de Kelley prend le max avec la borne des items fixés.
+- Essayé sans gain : big-M resserrés sur les conditions de port, options HiGHS (presolve, heuristiques, symétrie…), K = 25 en phase 1, départ glouton palier par palier pour le leveling. Le MIP commun du leveling (~75 % de son temps) reste le point lent : c'est surtout de la recherche d'incumbent, très sensible au chemin.
+- Les temps varient de ±30 % selon la charge de la machine ; le résultat, lui, est déterministe : comparer les valeurs, et les temps sur plusieurs configs.
 
 Mode leveling (`src/engine/leveling.js`) : le modèle commun est fait des sections de `buildSections` de chaque palier, renommées avec le suffixe `__k`. Les candidats de chaque palier sont l'union des items élagués de **tous** les paliers (via `keepIds`), sinon un item gardé d'un palier à l'autre peut disparaître des candidats du palier suivant et le moteur est forcé de le changer.
 

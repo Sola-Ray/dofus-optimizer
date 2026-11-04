@@ -11,21 +11,36 @@ export function createSession(highs, lp, options = {}) {
   const { modelStatus } = highs.constants;
 
   return {
-    // Résout ; cols = variables non nulles, au format { nom: { Primal } } du moteur
+    // Résout ; cols = variables non nulles, au format { nom: { Primal } } du moteur.
+    // Avec solve_relaxation (relaxation continue), reduced = coûts réduits non nuls { nom: d }.
     run(opts = {}) {
       model.options.set(opts);
       model.run();
       const status = model.getModelStatus();
-      const sol = model.getSolution().colValue;
+      const solution = model.getSolution();
+      const sol = solution.colValue;
       const cols = {};
       for (let j = 0; j < n; j++) if (sol[j]) cols[names[j]] = { Primal: sol[j] };
-      return {
+      const out = {
         optimal: status === modelStatus.optimal,
         infeasible: status === modelStatus.infeasible,
         feasible: Object.keys(cols).length > 0,
         objective: model.getObjectiveValue(),
         cols,
       };
+      if (opts.solve_relaxation && out.optimal) {
+        const d = solution.colDual;
+        out.reduced = {};
+        for (let j = 0; j < n; j++) if (Math.abs(d[j]) > 1e-12) out.reduced[names[j]] = d[j];
+      }
+      return out;
+    },
+    // Bornes [lo, hi] imposées aux variables nommées
+    setBounds(byName, lo, hi) {
+      for (const name of byName) {
+        const j = index.get(name);
+        if (j !== undefined) model.changeColBounds(j, lo, hi);
+      }
     },
     // coupes = [{ terms: { nomDeVariable: coef }, rhs }] ajoutées en  Σ coef·var <= rhs
     addCuts(cuts) {

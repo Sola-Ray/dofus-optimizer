@@ -368,6 +368,14 @@ export function buildSections(problem, cuts) {
     for (let n = 0; n <= s.maxK; n++) { one += ` + y${s.id}_${n}`; if (n) cnt += term(n, `y${s.id}_${n}`); binaries.push(`y${s.id}_${n}`); }
     rows.push(`${one} = 1`);
     rows.push(`${cnt}${s.items.map(i => ` - x${i}`).join('')} = 0`);
+    // Inégalités valides (mêmes solutions entières) : un bonus à 2 items ou plus demande un autre
+    // item de la panoplie que j. Sans elles, la relaxation continue mélange « 0 item » et « 2 items »
+    // pour toucher la moitié du bonus avec un seul item porté. Pas dans le modèle commun du mode
+    // leveling (problem.tight absent) : mesuré sans gain, le MIP commun y est surtout de la recherche.
+    if (problem.tight) {
+      const ge2 = Array.from({ length: s.maxK - 1 }, (_, n) => ` + y${s.id}_${n + 2}`).join('');
+      for (const j of s.items) rows.push(` setj${s.id}_${j}:${ge2}${s.items.filter(i => i !== j).map(i => ` - x${i}`).join('')} <= 0`);
+    }
   }
 
   // Points de caractéristique
@@ -752,31 +760,113 @@ export const cutRow = c => ({
   rhs: c.rhs,
 });
 
-// Boucle de Kelley sur un modèle persistant : coupes ajoutées à chaud, départ sur la solution précédente
-export async function kelley(solver, problem, cuts, start, onProgress, phase) {
+// Pré-boucle de Kelley sur la relaxation continue : chaque LP se résout en une fraction de seconde
+// et ses tangentes (prises aux stats du point fractionnaire) resserrent l'approximation du log des
+// dégâts autour de l'optimum avant le premier MIP, qui coûte, lui, plusieurs secondes. Les tangentes
+// restent des majorants valables où qu'on les prenne : le modèle reste le même, il est juste mieux
+// approché dès le départ. Renvoie le dernier LP résolu : relaxation du modèle courant (qui n'a que
+// plus de coupes), sa borne et ses coûts réduits y restent valables.
+const RELAX_ITERS = 12;
+async function relaxedCuts(session, problem, cuts) {
+  let prev = Infinity, last = null;
+  for (let i = 0; i < RELAX_ITERS; i++) {
+    const r = await session.run({ solve_relaxation: true, time_limit: 20 });
+    if (!r.optimal) break;
+    last = r;
+    // arrêt quand le LP ne bouge plus (les passifs fractionnaires gardent un petit écart)
+    if (prev - r.objective < 1e-4) break;
+    prev = r.objective;
+    const v = name => r.cols[name]?.Primal ?? 0;
+    const stats = { ...problem.base };
+    for (const k of problem.keys) stats[k] = v(`T_${k}`);
+    const items = problem.items.filter(it => it.passive && v(`x${it.idx}`) > 0.5);
+    const val = Math.log(Math.max(score(stats, ctxOf(problem, items.map(it => it.passive))), 1e-9));
+    if (v('t') - val < 1e-3) break;
+    const newCuts = makeCuts(problem, stats, { items });
+    cuts.push(...newCuts);
+    await session.addCuts(newCuts.map(cutRow));
+  }
+  return last;
+}
+
+// Point de départ ramené sous toutes les coupes (t = min des tangentes au point) : sinon il viole la
+// coupe qu'on vient d'y poser et HiGHS doit le réparer, ou l'écarte
+export function fitStart(start, cuts) {
+  const v = name => start[name]?.Primal ?? start[name] ?? 0;
+  let t = Infinity;
+  for (const c of cuts) {
+    let r = c.rhs;
+    for (const [k, g] of Object.entries(c.g)) r += g * v(`T_${k}`);
+    for (const [i, h] of Object.entries(c.h)) r += h * v(`x${i}`);
+    t = Math.min(t, r);
+  }
+  return Number.isFinite(t) ? { ...start, t: t - 1e-8 } : start;
+}
+
+// Objectif du modèle en un point de départ
+const objectiveOf = start => {
+  const v = name => start[name]?.Primal ?? start[name] ?? 0;
+  return v('t') + RES_KEYS.reduce((s, k) => s + EPS_RES * v(`T_${k}`), 0);
+};
+
+// Fixation par coûts réduits (phase 2, tous les items, en partant de la solution de la phase 1) :
+// la relaxation continue borne tout stuff qui contient l'item x par z* + d(x) (z* = optimum du LP,
+// d = coût réduit de x, négatif). Si cette borne est sous l'objectif du départ, x vaut 0 dans tout
+// stuff meilleur que lui : on le fixe à 0, et le MIP ne travaille plus que sur les items restants.
+// Renvoie les items fixés et la meilleure borne des stuffs qui en contiennent un.
+async function fixByReducedCost(session, problem, lp, start) {
+  const zinc = objectiveOf(start);
+  const fixed = [];
+  let outside = -Infinity;
+  for (const it of problem.items) {
+    const name = `x${it.idx}`;
+    const bound = lp.objective + (lp.reduced[name] || 0);
+    if ((lp.cols[name]?.Primal ?? 0) < 1e-9 && bound < zinc - 1e-6) { fixed.push(name); outside = Math.max(outside, bound); }
+  }
+  if (fixed.length) await session.setBounds(fixed, 0, 0);
+  return { fixed, outside };
+}
+
+// Boucle de Kelley sur un modèle persistant : coupes ajoutées à chaud, départ sur la solution précédente.
+// fast : pré-boucle sur la relaxation continue, points de départ ajustés aux coupes et, avec un départ,
+// fixation par coûts réduits (le mode leveling s'en passe : son modèle commun est construit sur les
+// coupes des paliers seuls, mesuré plus lent avec les coupes de la relaxation).
+export async function kelley(solver, problem, cuts, start, onProgress, phase, fast = false) {
   const session = await solver.open(buildLP(problem, cuts));
   try {
-    if (start) await session.warmStart(start);
     onProgress({ mode: problem.mode, phase, iter: 0, items: problem.items.length });
+    const lp = fast ? await relaxedCuts(session, problem, cuts) : null;
+    let fixed = [], outside = -Infinity;
+    if (start && fast) {
+      start = fitStart(start, cuts);
+      if (lp) ({ fixed, outside } = await fixByReducedCost(session, problem, lp, start));
+    }
+    if (start) await session.warmStart(start);
     let best = null, upper = Infinity;
     for (let iter = 0; iter < problem.cfg.maxIterations; iter++) {
-      const r = await session.run({ time_limit: 60, mip_rel_gap: 1e-4 });
+      const r = await session.run({ time_limit: 60, mip_rel_gap: 1e-4, solve_relaxation: false });
       if (r.infeasible || !r.feasible) {
         const why = problem.mode === 'crit' ? `Impossible d'atteindre ${problem.critTarget} % critique avec ces minimums.` : 'Aucun stuff ne respecte ces minimums.';
         throw new Error(r.infeasible ? why : 'Le solveur n\'a pas trouvé de solution à temps.');
       }
-      // l'objectif n'est une borne que si l'optimum est prouvé
-      if (r.optimal) upper = Math.min(upper, r.objective);
+      // l'objectif n'est une borne que si l'optimum est prouvé ; avec des items fixés, seulement
+      // pour les stuffs sans eux (les autres sont bornés par outside)
+      if (r.optimal) upper = Math.min(upper, Math.max(r.objective, outside));
       const cur = readSolution(problem, r.cols);
       const curStats = solutionStats(problem, cur);
       const val = score(curStats, ctxOf(problem, cur.items.filter(it => it.passive).map(it => it.passive)));
       if (!best || val > best.value) best = { ...cur, value: val, cols: r.cols };
       onProgress({ mode: problem.mode, phase, iter: iter + 1, value: best.value, items: problem.items.length });
       if (Math.log(best.value) >= upper - 1e-3) break;
+      // les nouvelles coupes ont fait passer l'optimum sous la borne des items fixés : on les libère
+      if (fixed.length && r.optimal && r.objective < outside) {
+        await session.setBounds(fixed, 0, 1);
+        fixed = []; outside = -Infinity;
+      }
       const newCuts = makeCuts(problem, curStats, cur);
       cuts.push(...newCuts);
       await session.addCuts(newCuts.map(cutRow));
-      await session.warmStart(r.cols);
+      await session.warmStart(fast ? fitStart(r.cols, cuts) : r.cols);
     }
     return best;
   } finally {
@@ -812,12 +902,13 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   const full = prepare(game, cfg);
   full.setsById = game.sets;
   full.mode = mode;
+  full.tight = true; // formulation renforcée (voir buildSections)
   const startStats = startStatsOf(full);
 
   // Phase 1 : items élagués. Phase 2 : tous les items, en partant de la solution de la phase 1.
   const p1 = full.items.length > 600 ? pruneTopK(full, startStats, PRUNE_K) : full;
   const cuts = startCuts(p1, startStats);
-  let best = await kelley(solver, p1, cuts, null, onProgress, 1);
+  let best = await kelley(solver, p1, cuts, null, onProgress, 1, true);
   let problem = p1;
   if (p1 !== full) {
     const toFull = {};
@@ -831,7 +922,7 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
       start[m ? `${m[1]}${mapIdx(+m[2])}${m[3]}` : name] = v;
     }
     for (const s of full.sets) if (!Object.keys(start).some(k => k.startsWith(`y${s.id}_`))) start[`y${s.id}_0`] = 1;
-    best = await kelley(solver, full, fullCuts, start, onProgress, 2);
+    best = await kelley(solver, full, fullCuts, start, onProgress, 2, true);
     problem = full;
   }
 
@@ -845,22 +936,36 @@ export const withPa = (scores, ctx, stats) => {
   return Object.fromEntries(Object.entries(scores).map(([el, v]) => [el, v * f]));
 };
 
-// Forgemagie exacte item par item, runes de transcendance, puis stats finales
+// Forgemagie exacte item par item, runes de transcendance, puis stats finales.
+// En multi-élément, la pente d'un seul élément met toute la forgemagie dans sa caractéristique
+// (les overs ne sont plus revus ensuite) : on essaie la pente de chaque élément et leur moyenne,
+// et on garde la forgemagie qui fait le plus de dégâts. Un seul élément : un seul essai, comme avant.
 export async function finalize(solver, problem, best) {
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
-  const grad = { ...(makeCuts(problem, bestStats, best)[0]?.g || {}) };
-  // exo PA : ce que rapporte le PA suivant, en partant des PA sans forgemagie
+  const ctx = ctxOf(problem, passives, true);
+  const grads = makeCuts(problem, bestStats, best).map(c => ({ ...c.g }));
+  if (grads.length > 1) {
+    const avg = {};
+    for (const g of grads) for (const [k, v] of Object.entries(g)) avg[k] = (avg[k] || 0) + v / grads.length;
+    grads.push(avg);
+  }
+  // exo PA : ce que rapporte le PA suivant, en partant des PA sans forgemagie (même valeur pour tous les éléments)
   if (problem.paCurve) {
     const pa0 = Math.min(PA_CAP, (bestStats.pa || 0) - (best.fm?.pa || 0));
-    grad.pa = Math.log(paFactor(problem.paCurve, Math.min(PA_CAP, pa0 + 1)) / Math.max(1e-9, paFactor(problem.paCurve, pa0)));
+    const gPa = Math.log(paFactor(problem.paCurve, Math.min(PA_CAP, pa0 + 1)) / Math.max(1e-9, paFactor(problem.paCurve, pa0)));
+    for (const g of grads) g.pa = gPa;
   }
-  const finish = await finishItems(solver, problem, best, grad);
-  const ctx = ctxOf(problem, passives, true);
-  const { perItem, transPerItem, fm } = improveFinishes(problem, best, finish, ctx);
-  const final = { ...best, fm, trans: {} };
-  const stats = solutionStats(problem, final);
-  return { problem, final, stats, perItem, transPerItem, passives, realScore: score(stats, ctx), ctx };
+  let out = null;
+  for (const grad of grads.length ? grads : [{ pa: 0 }]) {
+    const finish = await finishItems(solver, problem, best, grad);
+    const { perItem, transPerItem, fm } = improveFinishes(problem, best, finish, ctx);
+    const final = { ...best, fm, trans: {} };
+    const stats = solutionStats(problem, final);
+    const realScore = score(stats, ctx);
+    if (!out || realScore > out.realScore) out = { problem, final, stats, perItem, transPerItem, passives, realScore, ctx };
+  }
+  return out;
 }
 
 // Les finitions sont choisies avec une pente figée, ce qui met toute la même ligne partout

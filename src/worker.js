@@ -32,6 +32,7 @@ const solver = {
       run: options => w.call('run', { options }),
       addCuts: cuts => w.call('addCuts', { cuts }),
       warmStart: start => w.call('warmStart', { start }),
+      setBounds: (names, lo, hi) => w.call('setBounds', { names, lo, hi }),
       close: () => w.terminate(),
     };
   },
