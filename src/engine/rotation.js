@@ -24,6 +24,7 @@
 //   - PA constants à chaque tour (stats.pa par défaut). Les passifs suivent ctx.scenario pour tous
 //     les tours ; les PA gagnés par les passifs sont déjà comptés en % de dégâts (voir passives.js).
 import { simulateSpell, SPELL_RULES } from './damage.js';
+import { PA_CAP } from './rules.js';
 
 const NO_TARGET = {};
 
@@ -92,7 +93,7 @@ const turnOf = casts => {
 // Renvoie { pa, best: tour, average: { dmg, turns: [tour…] }, options } avec
 //   tour = { dmg, pa (PA dépensés), casts: [{ id, n, img, pa, count, dmg, weapon }] }
 export function turnDamage(spells, stats, ctx, options = {}) {
-  const pa = Math.max(0, Math.floor(options.pa ?? stats.pa ?? 0));
+  const pa = Math.max(0, Math.floor(options.pa ?? Math.min(PA_CAP, stats.pa ?? 0)));
   const turns = Math.max(1, options.turns ?? 5);
   const opts = turnOptions(spells, stats, ctx, options);
   // Sorts sans relance : un sac à dos commun à tous les tours. Sorts à relance (ou à relance

@@ -6,10 +6,10 @@
 // tangente au point trouvé, ce qui resserre la borne jusqu'à converger.
 import {
   baseStats, statPoints, SCROLL, CARACS, ELEMENT_STAT, ELEMENT_DO, ELEMENT_RES,
-  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, lineCap, pointSegments,
+  FM_ITEM_WEIGHT, FM_SLOTS, SLOT_LIMIT, SINGLE_EXO, STAT_LABEL, PA_CAP, lineCap, pointSegments,
 } from './rules.js';
 import { parseCriteria, checkCriteria } from './criteria.js';
-import { classSpells, elementSpells, score, elementScores, SPELL_RULES } from './damage.js';
+import { classSpells, elementSpells, score, elementScores, paFactor, SPELL_RULES } from './damage.js';
 import { turnDamage } from './rotation.js';
 import { PASSIVES } from './passives.js';
 
@@ -156,7 +156,7 @@ export function prepare(game, cfg) {
 const AUTO_STATS = { puissance: 200, crit: 50, doCrit: 100 };
 const pickCache = new Map();
 export function pickSpells(game, cfg) {
-  const key = JSON.stringify([cfg.breedId, cfg.level, cfg.elements, cfg.attack, cfg.min?.pa, cfg.spells]);
+  const key = JSON.stringify([cfg.breedId, cfg.level, cfg.elements, cfg.attack, cfg.min?.pa, cfg.spells, cfg.scenario]);
   if (pickCache.has(key)) return pickCache.get(key);
   const spells = classSpells(game, cfg.breedId, cfg.level);
   const chosen = new Set(cfg.spells || []);
@@ -193,16 +193,32 @@ export function pickSpells(game, cfg) {
     refSpells[el] = list.length ? list : generic;
     spellPicks[el] = { mode: list.length ? mode : 'générique', spells: list.map(sp => ({ id: sp.id, n: spells.find(x => x.id === sp.id)?.n || '', w: sp.w })) };
   }
-  const out = { refSpells, spellPicks };
+  const out = { refSpells, spellPicks, paCurve: paCurveOf(cfg.spells?.length ? spells.filter(sp => chosen.has(sp.id)) : played, stats, cfg) };
   pickCache.set(key, out);
   return out;
+}
+
+// Valeur des PA du stuff : dégâts par tour de la rotation jouée au mieux (rotation.js) avec les
+// sorts de référence, de 0 à PA_MAX PA, divisés par ceux aux PA de référence (minimum demandé, 12
+// par défaut). Tour moyen d'un combat de 5 tours, ou meilleur tour en burst. Croissante : un PA en
+// trop ne fait jamais perdre de dégâts. Le moteur l'utilise en log (variables zpa_p du modèle).
+export const PA_MAX = 24;
+function paCurveOf(spells, stats, cfg) {
+  const ref = stats.pa;
+  const dmg = [];
+  for (let p = 0; p <= PA_MAX; p++) {
+    const r = turnDamage(spells, { ...stats, pa: p }, { elements: cfg.elements, attack: cfg.attack, scenario: 'moyen', passives: [] }, { pa: p });
+    dmg.push(Math.max(dmg[p - 1] || 0, cfg.scenario === 'burst' ? r.best.dmg : r.average.dmg));
+  }
+  if (!(dmg[ref] > 0)) return null;
+  return dmg.map(d => d / dmg[ref]);
 }
 
 // Partie du problème qui ne dépend pas des items : sorts de référence, transcendances, critique visé.
 // Sert aussi à évaluer un stuff modifié à la main.
 export function problemBase(game, cfg) {
   const keys = relevantKeys(cfg);
-  const { refSpells, spellPicks } = pickSpells(game, cfg);
+  const { refSpells, spellPicks, paCurve } = pickSpells(game, cfg);
   const breed = game.breeds.find(b => b.id === cfg.breedId);
 
   // Meilleure rune de transcendance par stat utile
@@ -217,7 +233,7 @@ export function problemBase(game, cfg) {
     return cc.length ? 100 - Math.min(...cc) : 0;
   }));
   return {
-    cfg, keys: [...keys], refSpells, spellPicks, breed, runeWeight: game.runeWeight, setsById: game.sets, trans, critTarget,
+    cfg, keys: [...keys], refSpells, spellPicks, paCurve, breed, runeWeight: game.runeWeight, setsById: game.sets, trans, critTarget,
     base: baseStats(cfg.level), points: statPoints(cfg.level),
   };
 }
@@ -256,7 +272,7 @@ export function ctxOf(problem, passives, real = false) {
   const { cfg } = problem;
   return {
     elements: cfg.elements, attack: cfg.attack, scenario: cfg.scenario, refSpells: problem.refSpells, passives,
-    ignoreCrit: !real && problem.mode === 'noncrit',
+    paCurve: problem.paCurve, ignoreCrit: !real && problem.mode === 'noncrit',
   };
 }
 
@@ -279,6 +295,22 @@ export function buildSections(problem, cuts) {
   // Objectif
   let obj = ' + t';
   for (const k of RES_KEYS) obj += term(EPS_RES, `T_${k}`);
+
+  // Valeur des PA : zpa_p = 1 pour un seul niveau p <= PA du stuff, objectif + log(courbe[p]).
+  // La courbe est croissante : le solveur prend le plus haut niveau atteint.
+  const curve = problem.paCurve;
+  if (curve && keys.includes('pa')) {
+    const lo = Math.max(1, Math.min(PA_CAP, Math.floor(cfg.min?.pa || 1)));
+    const zs = [];
+    for (let p = lo; p <= PA_CAP; p++) {
+      const z = `zpa_${p}`;
+      zs.push([p, z]);
+      binaries.push(z);
+      obj += term(Math.log(Math.max(curve[p], 1e-6)), z);
+    }
+    rows.push(` zpa_one:${zs.map(([, z]) => ` + ${z}`).join('')} = 1`);
+    rows.push(` zpa_le:${zs.map(([p, z]) => term(p, z)).join('')} - T_pa <= 0`);
+  }
 
   // Totaux de stats
   const segVars = {};
@@ -789,11 +821,22 @@ async function solveMode(solver, game, cfg, mode, onProgress) {
   return finalize(solver, problem, best);
 }
 
+// Dégâts par élément affichés : multipliés par la valeur des PA du stuff, comme score
+export const withPa = (scores, ctx, stats) => {
+  const f = paFactor(ctx.paCurve, Math.min(PA_CAP, stats.pa || 0));
+  return Object.fromEntries(Object.entries(scores).map(([el, v]) => [el, v * f]));
+};
+
 // Forgemagie exacte item par item, runes de transcendance, puis stats finales
 export async function finalize(solver, problem, best) {
   const bestStats = solutionStats(problem, best);
   const passives = best.items.filter(it => it.passive).map(it => it.passive);
-  const grad = makeCuts(problem, bestStats, best)[0]?.g || {};
+  const grad = { ...(makeCuts(problem, bestStats, best)[0]?.g || {}) };
+  // exo PA : ce que rapporte le PA suivant, en partant des PA sans forgemagie
+  if (problem.paCurve) {
+    const pa0 = Math.min(PA_CAP, (bestStats.pa || 0) - (best.fm?.pa || 0));
+    grad.pa = Math.log(paFactor(problem.paCurve, Math.min(PA_CAP, pa0 + 1)) / Math.max(1e-9, paFactor(problem.paCurve, pa0)));
+  }
   const finish = await finishItems(solver, problem, best, grad);
   const ctx = ctxOf(problem, passives, true);
   const { perItem, transPerItem, fm } = improveFinishes(problem, best, finish, ctx);
@@ -854,7 +897,8 @@ function improveFinishes(problem, best, finish, ctx) {
 }
 
 // Pourquoi chaque exo PA / PM / PO coché est utilisé ou non. Un exo coché n'est jamais imposé :
-// le moteur ne le pose que s'il sert un minimum demandé ; sinon une autre finition rapporte plus.
+// le moteur ne le pose que s'il sert un minimum demandé ou, pour les PA, s'il rapporte plus de
+// dégâts par tour (courbe des PA) ; sinon une autre finition rapporte plus.
 export function exoNotes(cfg, stats, perItem) {
   const notes = [];
   if (cfg.gelanoPaPm) notes.push({ k: 'pm', used: true, text: 'Exo PM utilisé : imposé sur le Gelano PA PM.' });
@@ -866,10 +910,14 @@ export function exoNotes(cfg, stats, perItem) {
     const have = Math.round(stats[k] || 0);
     if (used && min !== undefined && have - 1 < min) {
       notes.push({ k, used, text: `Exo ${K} utilisé : sans lui tu serais à ${have - 1} ${K}, sous ton minimum de ${min}.` });
+    } else if (used && k === 'pa') {
+      notes.push({ k, used, text: `Exo PA utilisé : un PA de plus rapporte plus de dégâts par tour que les autres finitions.` });
     } else if (used) {
       notes.push({ k, used, text: `Exo ${K} utilisé : il ne coûte aucun dégât ici, aucune autre finition ne rapportait plus sur cet item.` });
     } else {
-      notes.push({ k, used, text: min !== undefined
+      notes.push({ k, used, text: k === 'pa'
+        ? (have >= PA_CAP ? `Exo PA non utilisé : tu es à ${have} PA sans lui, et le combat commence au plus à ${PA_CAP} PA.` : `Exo PA non utilisé : à ${have} PA, un PA de plus rapporte moins de dégâts par tour que les finitions choisies.`)
+        : min !== undefined
         ? `Exo ${K} non utilisé : ton minimum de ${min} ${K} est atteint sans lui (${have}), et d'autres finitions rapportent plus de dégâts.`
         : `Exo ${K} non utilisé : sans minimum de ${K} demandé, il n'augmente pas les dégâts ; d'autres finitions rapportent plus.` });
     }
@@ -928,7 +976,7 @@ export function buildResult(cfg, chosen, runs, failed = null) {
     setBonuses: final.setBonuses,
     stats,
     score: chosen.realScore,
-    elementScores: elementScores(stats, ctx),
+    elementScores: withPa(elementScores(stats, ctx), ctx, stats),
     ctx: { elements: ctx.elements, attack: ctx.attack, scenario: ctx.scenario, passives },
     spellPicks: problem.spellPicks,
     crit: {

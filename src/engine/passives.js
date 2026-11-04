@@ -11,15 +11,29 @@
 // Une fonction reçoit les stats du perso (s) quand l'effet en dépend.
 // def : réduction moyenne des dégâts subis (affichage seulement).
 
+import { PA_CAP } from './rules.js';
+
 const ELEMENT_STAT = { feu: 'intel', eau: 'chance', terre: 'force', air: 'agi', neutre: 'force' };
 
-const PA_NOTE = 'Les PA gagnés en combat sont comptés comme des dégâts en plus sur le tour (+1 PA à 12 PA ≈ +8 %).';
+const PA_NOTE = 'Les PA gagnés en combat sont comptés comme des dégâts en plus sur le tour, d\'après ta rotation (+1 PA à 12 PA ≈ +8 %).';
+
+// Attaques subies, une seule hypothèse pour tous les passifs qui en dépendent (Pourpre, Vulbis, Ocre) :
+// entre deux de tes tours, tu es attaqué une fois sur deux (ATTACKED), et HITS attaques quand ça arrive.
+// Combat moyen de 5 tours, ennemis qui jouent après toi au premier tour.
+const ATTACKED = 0.5;
+const HITS = 2.5;
+// Pourpre : cumuls actifs au tour t = attaques subies pendant les 2 tours ennemis précédents
+// (0 au tour 1, 1 tour ennemi au tour 2, 2 ensuite), 10 au plus
+const POURPRE_MOYEN = [0, 1, 2, 2, 2].reduce((t, n) => t + Math.min(10, n * ATTACKED * HITS), 0) / 5;
+// Vulbis et Ocre : à partir du tour 2, si aucune attaque subie depuis ton tour précédent
+const UNHIT_MOYEN = (4 * (1 - ATTACKED)) / 5;
+const ATTACK_NOTE = `Suppose que tu es attaqué un tour sur deux (${HITS} attaques ce tour-là), comme pour le Pourpre, le Vulbis et l'Ocre.`;
 
 export const PASSIVES = {
   // --- Dofus ---
   8395: { // Pourpre : +1 % finaux par attaque subie, 2 tours, 10 fois
-    moyen: { finaux: 5 }, burst: { finaux: 10 },
-    note: 'Suppose 2 à 3 attaques subies par tour (PvM).',
+    moyen: { finaux: POURPRE_MOYEN }, burst: { finaux: 10 },
+    note: `Rien au tour 1. ${ATTACK_NOTE} Burst : 10 attaques subies sur les 2 derniers tours.`,
   },
   5952: { // Turquoise : +1 % finaux par coup critique, 3 tours, 10 fois
     moyen: s => ({ finaux: Math.min(10, 3 * 3 * critChance(s)) }),
@@ -29,8 +43,8 @@ export const PASSIVES = {
   // Vulbis et Ocre : déclencheur « début de tour » avec 1 tour de délai dans les données du jeu,
   // donc rien au tour 1 ; sur 5 tours, au mieux 4 déclenchements.
   8396: { // Vulbis : +10 % finaux si aucune attaque subie depuis le tour précédent
-    moyen: { finaux: 4 }, burst: { finaux: 10 },
-    note: 'Ne se déclenche qu\'à partir du tour 2. Suppose que tu n\'es pas attaqué un tour sur deux.',
+    moyen: { finaux: 10 * UNHIT_MOYEN }, burst: { finaux: 10 },
+    note: `Ne se déclenche qu'à partir du tour 2. ${ATTACK_NOTE}`,
   },
   18888: { // Tacheté : +20 Dommages le tour suivant si tu as frappé
     moyen: { do: 16 }, burst: { do: 20 },
@@ -44,8 +58,8 @@ export const PASSIVES = {
       + 'seul le bonus en mêlée se déclenche et il ne sert à rien. Poison de 16 par tour à partir du tour 2.',
   },
   8394: { // Ocre : +1 PA au début du tour si aucune attaque subie depuis le tour précédent
-    moyen: s => perTurn(s, 0.4), burst: s => perTurn(s, 1),
-    note: PA_NOTE + ' Ne se déclenche qu\'à partir du tour 2. Suppose que tu n\'es pas attaqué un tour sur deux.',
+    moyen: s => perTurn(s, UNHIT_MOYEN), burst: s => perTurn(s, 1),
+    note: `${PA_NOTE} Ne se déclenche qu'à partir du tour 2. ${ATTACK_NOTE}`,
   },
   6828: { // Abyssal : +1 PM sans ennemi au contact, sinon +1 PA
     moyen: s => perTurn(s, 0.3), burst: s => perTurn(s, 1),
@@ -158,11 +172,22 @@ const TOUR1 = {
   31860: { cible: 4 }, // Thanatena
 };
 
-// Un PA gagné en combat = environ un sort de plus : compté en % de dégâts sur le tour
-// (+1 PA à 12 PA = +8,3 %). Les PA du stuff, eux, ne servent qu'aux minimums demandés.
+// Valeur des PA : curve[p] = dégâts par tour à p PA divisés par ceux aux PA de référence (rotation
+// jouée au mieux avec les sorts de référence, voir pickSpells). Entre deux entiers, interpolation
+// linéaire (PA gagnés « en moyenne » par un passif). Sans courbe : 1.
+export function paFactor(curve, pa) {
+  if (!curve) return 1;
+  const p = Math.max(0, Math.min(curve.length - 1, pa || 0));
+  const i = Math.floor(p), f = p - i;
+  return i + 1 < curve.length ? curve[i] * (1 - f) + curve[i + 1] * f : curve[i];
+}
+
+// Un PA gagné en combat : compté en % de dégâts sur le tour, d'après la courbe des PA (s.paCurve) ;
+// sans courbe, linéaire (+1 PA à 12 PA = +8,3 %). Les PA du stuff passent par score (damage.js).
 function perTurn(s, extraPA, finaux = 0) {
-  const pa = Math.max(1, s.pa || 12);
-  return { finaux: 100 * (((pa + extraPA) / pa) * (1 + finaux / 100) - 1) };
+  const pa = Math.max(1, Math.min(PA_CAP, s.pa || PA_CAP));
+  const gain = s.paCurve ? paFactor(s.paCurve, pa + extraPA) / paFactor(s.paCurve, pa) : (pa + extraPA) / pa;
+  return { finaux: 100 * (gain * (1 + finaux / 100) - 1) };
 }
 // Moyenne sur n tours : [[nbTours, PA gagnés, % finaux], …]
 function turns(s, n, phases) {
